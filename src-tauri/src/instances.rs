@@ -45,6 +45,11 @@ pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, Stri
 }
 
 pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String>) -> Result<InstanceConfig, String> {
+    let instances = list_instances(app).await?;
+    if instances.iter().any(|i| i.name.eq_ignore_ascii_case(&name)) {
+        return Err("An instance with this name already exists".to_string());
+    }
+
     let profiles_dir = get_profiles_dir(app).await;
     let id = uuid::Uuid::new_v4().to_string();
     

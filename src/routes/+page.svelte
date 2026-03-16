@@ -8,12 +8,16 @@
     installProgress,
     instances 
   } from '$lib/store';
+  import { get } from 'svelte/store';
   import InstanceCard from '$lib/components/InstanceCard.svelte';
 
   let showCreateModal = false;
   let newInstanceName = '';
   let newInstanceProxy = '';
   let viewMode: 'grid' | 'list' = 'grid';
+  let nameError = '';
+
+  $: if (newInstanceName) nameError = '';
 
   onMount(() => {
     checkInstallation();
@@ -21,16 +25,30 @@
 
   async function handleCreate(e: Event) {
     e.preventDefault();
-    if (!newInstanceName.trim()) return;
+    const name = newInstanceName.trim();
+    if (!name) return;
+
+    // Frontend validation
+    const currentInstances = get(instances);
+    if (currentInstances.some(i => i.name.toLowerCase() === name.toLowerCase())) {
+      nameError = 'AN INSTANCE WITH THIS NAME ALREADY EXISTS';
+      return;
+    }
     
-    await createInstance(
-      newInstanceName, 
-      newInstanceProxy.trim() || undefined
-    );
-    
-    showCreateModal = false;
-    newInstanceName = '';
-    newInstanceProxy = '';
+    try {
+      await createInstance(
+        name, 
+        newInstanceProxy.trim() || undefined
+      );
+      // Reset form and close modal on success
+      newInstanceName = '';
+      newInstanceProxy = '';
+      showCreateModal = false;
+    } catch (error) {
+      console.error('Error creating instance:', error);
+      // Optionally, display an error message to the user
+      nameError = 'FAILED TO CREATE INSTANCE'; // Or a more specific error
+    }
   }
 </script>
 
@@ -122,7 +140,11 @@
             placeholder="E.G. WORK" 
             required 
             class="input-field"
+            class:input-error={!!nameError}
           />
+          {#if nameError}
+            <span class="error-text">{nameError}</span>
+          {/if}
         </div>
         <div class="form-group">
           <label for="proxy">PROXY</label>
@@ -365,6 +387,19 @@
     border-color: var(--text-main);
   }
 
+  .input-error {
+    border-color: #ff4444 !important;
+  }
+
+  .error-text {
+    color: #ff4444;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: -0.25rem;
+    animation: fadeIn 0.2s ease;
+  }
+
   .modal-actions {
     display: flex;
     justify-content: flex-end;
@@ -374,5 +409,10 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 </style>

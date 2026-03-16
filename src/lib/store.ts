@@ -53,6 +53,7 @@ export async function createInstance(name: string, proxy?: string) {
     await loadInstances();
   } catch (e) {
     console.error('Failed to create instance', e);
+    throw e;
   }
 }
 
