@@ -1,0 +1,10 @@
+<svg viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#000000"/>
+  <!-- Scaled down by 20% toward the center. Center is 512,512.
+       Original top: 512, 128 -> 512, 204.8
+       Original bot-left: 128, 896 -> 204.8, 819.2
+       Original bot-right: 896, 896 -> 819.2, 819.2 -->
+  <polygon points="512,205 205,819 819,819 512,205" stroke="#ffffff" stroke-width="48" stroke-linejoin="miter"/>
+  <!-- Inner triangle: original 512,896 -> 512,819.2; 320,512 -> 358.4,512; 704,512 -> 665.6, 512 -->
+  <polygon points="512,819 358,512 666,512 512,819" stroke="#ffffff" stroke-width="48" stroke-linejoin="miter"/>
+</svg>
