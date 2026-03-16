@@ -1,21 +1,40 @@
-<script>
-  import '../app.css';
-  import { camoufoxDownloaded } from '$lib/store';
+<script lang="ts">
+  import "../app.css";
+  import { camoufoxDownloaded } from "$lib/store";
+  import { onMount } from "svelte";
+
+  onMount(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener("contextmenu", handleContextMenu);
+    return () => {
+      window.removeEventListener("contextmenu", handleContextMenu);
+    };
+  });
 </script>
 
 <div class="app-container">
   <header class="app-header bento-panel">
     <h1>
       {#if $camoufoxDownloaded}
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <polygon points="12 2 2 22 22 22 12 2"/>
-          <polygon points="12 22 7 12 17 12 12 22"/>
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+        >
+          <polygon points="12 2 2 22 22 22 12 2" />
+          <polygon points="12 22 7 12 17 12 12 22" />
         </svg>
       {/if}
       ANON <span class="badge">INSTANCE MANAGER</span>
     </h1>
   </header>
-  
+
   <main class="app-main">
     <slot />
   </main>
