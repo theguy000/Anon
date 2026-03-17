@@ -47,6 +47,11 @@ async fn launch_instance(app: tauri::AppHandle, id: String) -> Result<(), String
     instances::launch_instance(&app, id).await
 }
 
+#[tauri::command]
+async fn update_instance_settings(app: tauri::AppHandle, id: String, fingerprint: instances::FingerprintConfig) -> Result<(), String> {
+    instances::update_instance_settings(&app, id, fingerprint).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -60,7 +65,8 @@ pub fn run() {
             launch_instance,
             toggle_persistence,
             get_settings,
-            update_settings
+            update_settings,
+            update_instance_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

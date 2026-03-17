@@ -360,7 +360,7 @@
   .col-proxy { flex: 1; }
   .col-setting { width: 80px; text-align: center; }
   .col-date { width: 100px; text-align: left; }
-  .col-actions { width: 140px; text-align: right; }
+  .col-actions { width: 170px; text-align: right; }
 
   .sort-btn {
     background: none;

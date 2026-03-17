@@ -6,6 +6,107 @@ use tauri::{AppHandle, Manager};
 
 use crate::camoufox::get_app_dir;
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct FingerprintConfig {
+    // Navigator
+    pub user_agent: Option<String>,
+    pub platform: Option<String>,
+    pub oscpu: Option<String>,
+    pub app_code_name: Option<String>,
+    pub app_name: Option<String>,
+    pub app_version: Option<String>,
+    pub product: Option<String>,
+    pub product_sub: Option<String>,
+    pub build_id: Option<String>,
+    pub hardware_concurrency: Option<u32>,
+    pub max_touch_points: Option<u32>,
+    pub do_not_track: Option<String>,
+    pub language: Option<String>,
+    pub languages: Option<String>,
+    pub cookie_enabled: Option<bool>,
+    pub global_privacy_control: Option<bool>,
+    pub online: Option<bool>,
+
+    // Screen & Display
+    pub screen_height: Option<u32>,
+    pub screen_width: Option<u32>,
+    pub screen_avail_height: Option<u32>,
+    pub screen_avail_width: Option<u32>,
+    pub screen_avail_top: Option<u32>,
+    pub screen_avail_left: Option<u32>,
+    pub color_depth: Option<u32>,
+    pub pixel_depth: Option<u32>,
+    pub device_pixel_ratio: Option<f64>,
+
+    // Window
+    pub outer_height: Option<u32>,
+    pub outer_width: Option<u32>,
+    pub inner_height: Option<u32>,
+    pub inner_width: Option<u32>,
+    pub screen_x: Option<i32>,
+    pub screen_y: Option<i32>,
+
+    // WebGL
+    pub webgl_renderer: Option<String>,
+    pub webgl_vendor: Option<String>,
+    pub webgl_block_if_not_defined: Option<bool>,
+
+    // Canvas & Audio Seeds
+    pub canvas_seed: Option<u32>,
+    pub audio_seed: Option<u32>,
+
+    // AudioContext
+    pub audio_sample_rate: Option<u32>,
+    pub audio_output_latency: Option<f64>,
+    pub audio_max_channel_count: Option<u32>,
+
+    // Fonts
+    pub fonts_spacing_seed: Option<u32>,
+
+    // Geolocation, Timezone & Locale
+    pub geo_latitude: Option<f64>,
+    pub geo_longitude: Option<f64>,
+    pub geo_accuracy: Option<f64>,
+    pub timezone: Option<String>,
+    pub locale_language: Option<String>,
+    pub locale_region: Option<String>,
+
+    // WebRTC
+    pub webrtc_ipv4: Option<String>,
+    pub webrtc_ipv6: Option<String>,
+    pub webrtc_local_ipv4: Option<String>,
+    pub webrtc_local_ipv6: Option<String>,
+
+    // HTTP Headers
+    pub header_user_agent: Option<String>,
+    pub header_accept_language: Option<String>,
+    pub header_accept_encoding: Option<String>,
+
+    // Battery
+    pub battery_charging: Option<bool>,
+    pub battery_charging_time: Option<f64>,
+    pub battery_discharging_time: Option<f64>,
+    pub battery_level: Option<f64>,
+
+    // Media Devices
+    pub media_micros: Option<u32>,
+    pub media_webcams: Option<u32>,
+    pub media_speakers: Option<u32>,
+
+    // Speech Voices
+    pub speech_voices: Option<Vec<String>>,
+
+    // Behavior
+    pub humanize: Option<bool>,
+    pub showcursor: Option<bool>,
+    pub pdf_viewer_enabled: Option<bool>,
+
+    // Advanced
+    pub allow_main_world: Option<bool>,
+    pub force_scope_access: Option<bool>,
+    pub memory_saver: Option<bool>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InstanceConfig {
     pub id: String,
@@ -13,6 +114,8 @@ pub struct InstanceConfig {
     pub proxy: Option<String>,
     pub persist_data: bool,
     pub created_at: i64,
+    #[serde(default)]
+    pub fingerprint: Option<FingerprintConfig>,
 }
 
 pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
@@ -123,6 +226,7 @@ pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64,
+        fingerprint: None,
     };
 
     // Save anon config
@@ -208,4 +312,25 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
     }
     
     Err("Failed to update instance config".to_string())
+}
+
+pub async fn update_instance_settings(app: &AppHandle, id: String, fingerprint: FingerprintConfig) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(&id);
+
+    if !instance_dir.exists() {
+        return Err("Instance profile not found".to_string());
+    }
+
+    let config_path = instance_dir.join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.fingerprint = Some(fingerprint);
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+
+    Err("Failed to update instance settings".to_string())
 }

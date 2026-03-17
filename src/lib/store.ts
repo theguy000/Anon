@@ -2,9 +2,118 @@ import { writable } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+export interface FingerprintConfig {
+  // Navigator
+  user_agent?: string | null;
+  platform?: string | null;
+  oscpu?: string | null;
+  app_code_name?: string | null;
+  app_name?: string | null;
+  app_version?: string | null;
+  product?: string | null;
+  product_sub?: string | null;
+  build_id?: string | null;
+  hardware_concurrency?: number | null;
+  max_touch_points?: number | null;
+  do_not_track?: string | null;
+  language?: string | null;
+  languages?: string | null;
+  cookie_enabled?: boolean | null;
+  global_privacy_control?: boolean | null;
+  online?: boolean | null;
+
+  // Screen & Display
+  screen_height?: number | null;
+  screen_width?: number | null;
+  screen_avail_height?: number | null;
+  screen_avail_width?: number | null;
+  screen_avail_top?: number | null;
+  screen_avail_left?: number | null;
+  color_depth?: number | null;
+  pixel_depth?: number | null;
+  device_pixel_ratio?: number | null;
+
+  // Window
+  outer_height?: number | null;
+  outer_width?: number | null;
+  inner_height?: number | null;
+  inner_width?: number | null;
+  screen_x?: number | null;
+  screen_y?: number | null;
+
+  // WebGL
+  webgl_renderer?: string | null;
+  webgl_vendor?: string | null;
+  webgl_block_if_not_defined?: boolean | null;
+
+  // Canvas & Audio Seeds
+  canvas_seed?: number | null;
+  audio_seed?: number | null;
+
+  // AudioContext
+  audio_sample_rate?: number | null;
+  audio_output_latency?: number | null;
+  audio_max_channel_count?: number | null;
+
+  // Fonts
+  fonts_spacing_seed?: number | null;
+
+  // Geolocation, Timezone & Locale
+  geo_latitude?: number | null;
+  geo_longitude?: number | null;
+  geo_accuracy?: number | null;
+  timezone?: string | null;
+  locale_language?: string | null;
+  locale_region?: string | null;
+
+  // WebRTC
+  webrtc_ipv4?: string | null;
+  webrtc_ipv6?: string | null;
+  webrtc_local_ipv4?: string | null;
+  webrtc_local_ipv6?: string | null;
+
+  // HTTP Headers
+  header_user_agent?: string | null;
+  header_accept_language?: string | null;
+  header_accept_encoding?: string | null;
+
+  // Battery
+  battery_charging?: boolean | null;
+  battery_charging_time?: number | null;
+  battery_discharging_time?: number | null;
+  battery_level?: number | null;
+
+  // Media Devices
+  media_micros?: number | null;
+  media_webcams?: number | null;
+  media_speakers?: number | null;
+
+  // Speech Voices
+  speech_voices?: string[] | null;
+
+  // Behavior
+  humanize?: boolean | null;
+  showcursor?: boolean | null;
+  pdf_viewer_enabled?: boolean | null;
+
+  // Advanced
+  allow_main_world?: boolean | null;
+  force_scope_access?: boolean | null;
+  memory_saver?: boolean | null;
+}
+
+export interface InstanceConfig {
+  id: string;
+  name: string;
+  proxy: string | null;
+  persist_data: boolean;
+  created_at: number;
+  fingerprint?: FingerprintConfig | null;
+}
+
 export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
-export const instances = writable<any[]>([]);
+export const instances = writable<InstanceConfig[]>([]);
 export const isLaunching = writable<string | null>(null);
 export const settings = writable<{ skip_wipe_confirmation: boolean }>({ skip_wipe_confirmation: false });
 
@@ -42,7 +151,7 @@ export async function startDownload() {
 
 export async function loadInstances() {
   try {
-    const list = await invoke<any[]>('list_instances');
+    const list = await invoke<InstanceConfig[]>('list_instances');
     instances.set(list);
   } catch (e) {
     console.error('Failed to list instances', e);
@@ -103,5 +212,15 @@ export async function updateSettings(newSettings: any) {
     settings.set(newSettings);
   } catch (e) {
     console.error('Failed to update settings', e);
+  }
+}
+
+export async function updateInstanceSettings(id: string, fingerprint: FingerprintConfig) {
+  try {
+    await invoke('update_instance_settings', { id, fingerprint });
+    await loadInstances();
+  } catch (e) {
+    console.error('Failed to update instance settings', e);
+    throw e;
   }
 }
