@@ -1,3 +1,4 @@
+mod auto_fingerprint;
 mod camoufox;
 mod fingerprint_presets;
 mod instances;

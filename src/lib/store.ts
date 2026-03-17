@@ -104,6 +104,9 @@ export interface FingerprintConfig {
   // Global Preset Selection
   global_category?: string | null;
   global_preset_index?: number | null;
+
+  // AUTO mode: let camoufox's browserforge handle all fingerprinting
+  auto_fingerprint?: boolean | null;
 }
 
 export interface InstanceConfig {

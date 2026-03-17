@@ -109,6 +109,9 @@ pub struct FingerprintConfig {
     // Global Preset Selection (persisted so it survives restart)
     pub global_category: Option<String>,
     pub global_preset_index: Option<i32>,
+
+    // AUTO mode: let camoufox's built-in browserforge handle all fingerprinting
+    pub auto_fingerprint: Option<bool>,
 }
 
 /// Convert a FingerprintConfig into a JSON object that camoufox understands
@@ -473,11 +476,15 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
     // Build the CAMOU_CONFIG JSON from fingerprint settings
-    let camou_config_json = config
-        .as_ref()
-        .and_then(|c| c.fingerprint.as_ref())
-        .map(|fp| build_camou_config(fp).to_string())
-        .unwrap_or_else(|| "{}".to_string());
+    let camou_config_json = if let Some(fp) = config.as_ref().and_then(|c| c.fingerprint.as_ref()) {
+        if fp.auto_fingerprint == Some(true) {
+            crate::auto_fingerprint::generate_auto_config().to_string()
+        } else {
+            build_camou_config(fp).to_string()
+        }
+    } else {
+        "{}".to_string()
+    };
 
     // Spawn detached process with CAMOU_CONFIG env var
     std::process::Command::new(bin_path)

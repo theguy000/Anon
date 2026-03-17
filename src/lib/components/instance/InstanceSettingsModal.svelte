@@ -45,6 +45,11 @@
   let globalCategory = "";
   let globalPresetIndex = -1;
 
+  // AUTO mode state
+  let autoMode = false;
+  const accentGreen = '#10b981';
+  const accentGreenBg = 'rgba(16, 185, 129, 0.05)';
+
   // Initialize on open — IMPORTANT: do NOT read `fp` inside this block,
   // or any `fp = ...` assignment will trigger re-initialization and reset values.
   $: if (show && instance) {
@@ -56,6 +61,7 @@
     customWebgl = !!instance.fingerprint?.webgl_renderer;
     globalCategory = instance.fingerprint?.global_category ?? "";
     globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
+    autoMode = instance.fingerprint?.auto_fingerprint === true;
   }
 
   // ── Save / Reset ───────────────────────────────────────────────────────────
@@ -110,6 +116,8 @@
       // Persist the global preset selection
       fp.global_category = globalCategory || null;
       fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
+      // Persist AUTO mode settings
+      fp.auto_fingerprint = autoMode || null;
       await updateInstanceSettings(instance.id, fp);
       dispatch("close");
     } catch (e) {
@@ -126,6 +134,7 @@
     customWebgl = false;
     globalCategory = "";
     globalPresetIndex = -1;
+    autoMode = false;
   }
   function handleClose() {
     dispatch("close");
@@ -160,6 +169,29 @@
     </div>
 
     <div class="settings-body">
+      <!-- AUTO MODE -->
+      <div class="auto-mode-panel section-group" style="padding: 1rem; border: 1px solid {autoMode ? accentGreen : 'var(--panel-border)'}; background: {autoMode ? accentGreenBg : 'rgba(255, 255, 255, 0.02)'}; margin-bottom: 1rem; transition: border-color 0.2s, background 0.2s;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <h4 style="margin: 0; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; color: {autoMode ? accentGreen : 'var(--text-primary)'};">AUTO MODE</h4>
+            <span style="font-size: 0.6rem; letter-spacing: 0.05em; color: var(--text-secondary);">BROWSERFORGE FINGERPRINTING</span>
+          </div>
+          <button
+            class="btn {autoMode ? 'btn-active' : ''}"
+            style="font-size: 0.6rem; padding: 4px 12px; min-width: 50px; letter-spacing: 0.05em; {autoMode ? `background: ${accentGreen}; color: #000; border-color: ${accentGreen};` : ''}"
+            on:click={() => { autoMode = !autoMode; }}
+          >
+            {autoMode ? 'ON' : 'OFF'}
+          </button>
+        </div>
+        {#if autoMode}
+          <p style="margin: 12px 0 0; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 0.03em; line-height: 1.5;">
+            Camoufox's built-in browserforge will automatically generate a unique fingerprint on each launch. All fields — navigator, screen, WebGL, fonts, audio, canvas, and more — are handled automatically.
+          </p>
+        {/if}
+      </div>
+
+      {#if !autoMode}
       <div class="global-preset-selector section-group" style="padding: 1rem; border: 1px solid var(--panel-border); background: rgba(255, 255, 255, 0.02); margin-bottom: 1rem;">
         <h4 style="margin-top: 0; margin-bottom: 15px; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; color: var(--text-primary); border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">GLOBAL PROFILE PRESET</h4>
         <div class="field-row">
@@ -206,6 +238,7 @@
       <MediaDevicesSection bind:fp bind:open={sections["media"]} />
       <BehaviorSection bind:fp bind:open={sections["behavior"]} />
       <AdvancedSection bind:fp bind:open={sections["advanced"]} />
+      {/if}
     </div>
 
     <div class="settings-footer">
