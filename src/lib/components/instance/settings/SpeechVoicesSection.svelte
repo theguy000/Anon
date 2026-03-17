@@ -1,0 +1,19 @@
+<script lang="ts">
+  import SettingsSection from "../SettingsSection.svelte";
+  export let open: boolean = false;
+</script>
+
+<SettingsSection title="SPEECH VOICES" bind:open>
+  <div class="field">
+    <label for="fp-voice-names-comma-separated">VOICE NAMES (COMMA SEPARATED)</label>
+    <textarea id="fp-voice-names-comma-separated"
+      placeholder="AUTO — OS DEFAULT VOICES (E.G. SAMANTHA, ALEX, FRED)"
+      class="input-field mono textarea"
+      rows="3"
+    ></textarea>
+    <span class="field-hint"
+      >LEAVE EMPTY TO USE THE OS-DEFAULT VOICE LIST FOR THE DETECTED
+      PLATFORM</span
+    >
+  </div>
+</SettingsSection>
