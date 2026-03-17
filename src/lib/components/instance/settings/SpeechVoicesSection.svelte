@@ -4,7 +4,7 @@
 </script>
 
 <SettingsSection title="SPEECH VOICES" bind:open>
-  <div class="field">
+  <div class="field" data-tooltip="Comma-separated list of voice names to simulate availability.">
     <label for="fp-voice-names-comma-separated">VOICE NAMES (COMMA SEPARATED)</label>
     <textarea id="fp-voice-names-comma-separated"
       placeholder="AUTO — OS DEFAULT VOICES (E.G. SAMANTHA, ALEX, FRED)"

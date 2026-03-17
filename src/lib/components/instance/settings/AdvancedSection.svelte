@@ -8,7 +8,7 @@
 </script>
 
 <SettingsSection title="ADVANCED" bind:open>
-  <div class="toggle-item">
+  <div class="toggle-item" data-tooltip="Allow the mw: prefix for evaluating JavaScript in the main world.">
     <div class="label-group">
       <label for="fp-allow-main-world">ALLOW MAIN WORLD</label><span class="field-hint"
         >ALLOW MW: PREFIX FOR MAIN-WORLD JS EVAL</span
@@ -27,7 +27,7 @@
       /><span class="slider"></span></label
     >
   </div>
-  <div class="toggle-item mt">
+  <div class="toggle-item mt" data-tooltip="Force content scripts to have access to the page scope.">
     <div class="label-group">
       <label for="fp-force-scope-access">FORCE SCOPE ACCESS</label><span class="field-hint"
         >FORCE CONTENT SCOPE ACCESS</span
@@ -46,7 +46,7 @@
       /><span class="slider"></span></label
     >
   </div>
-  <div class="toggle-item mt">
+  <div class="toggle-item mt" data-tooltip="Reduce memory usage for this browser instance.">
     <div class="label-group">
       <label for="fp-memory-saver">MEMORY SAVER</label><span class="field-hint"
         >REDUCE MEMORY USAGE FOR THIS INSTANCE</span

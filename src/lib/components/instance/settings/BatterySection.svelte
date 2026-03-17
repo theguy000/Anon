@@ -16,7 +16,7 @@
   ].filter((v) => v != null).length} SET"
   bind:open
 >
-  <div class="toggle-item">
+  <div class="toggle-item" data-tooltip="Whether the battery is currently being charged.">
     <label for="fp-charging">CHARGING</label>
     <label class="switch"
       ><input id="fp-charging"
@@ -31,7 +31,7 @@
       /><span class="slider"></span></label
     >
   </div>
-  <div class="field mt">
+  <div class="field mt" data-tooltip="The current battery level.">
     <label for="fp-battery-level"
       >BATTERY LEVEL — {((fp.battery_level ?? 1) * 100).toFixed(
         0,
@@ -53,7 +53,7 @@
     </div>
   </div>
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The remaining time until the battery is fully charged.">
       <label for="fp-charge-time-s">CHARGE TIME (S)</label><input id="fp-charge-time-s"
         type="number"
         min="0"
@@ -64,7 +64,7 @@
         class="input-field"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The remaining time until the battery is completely discharged.">
       <label for="fp-discharge-time-s">DISCHARGE TIME (S)</label><input id="fp-discharge-time-s"
         type="number"
         min="0"

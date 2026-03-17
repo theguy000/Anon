@@ -40,7 +40,7 @@
     .length} SET"
   bind:open
 >
-  <div class="field">
+  <div class="field" data-tooltip="The simulated WebGL hardware renderer and vendor.">
     <label for="fp-gpu-preset">GPU PRESET</label>
     <select id="fp-gpu-preset"
       value={selectedWebglPreset}
@@ -56,7 +56,7 @@
     >
   </div>
   {#if customWebgl}
-    <div class="field">
+    <div class="field" data-tooltip="The unmasked renderer string of the WebGL API.">
       <label for="fp-renderer-custom">RENDERER (CUSTOM)</label>
       <input id="fp-renderer-custom"
         type="text"
@@ -66,7 +66,7 @@
         class="input-field mono"
       />
     </div>
-    <div class="field">
+    <div class="field" data-tooltip="The unmasked vendor string of the WebGL API.">
       <label for="fp-vendor-custom">VENDOR (CUSTOM)</label>
       <input id="fp-vendor-custom"
         type="text"
@@ -86,7 +86,7 @@
       >
     </div>
   {/if}
-  <div class="toggle-item mt">
+  <div class="toggle-item mt" data-tooltip="Block WebGL requests if no values are defined.">
     <label for="fp-block-webgl-if-not-defined">BLOCK WEBGL IF NOT DEFINED</label>
     <label class="switch"
       ><input id="fp-block-webgl-if-not-defined"

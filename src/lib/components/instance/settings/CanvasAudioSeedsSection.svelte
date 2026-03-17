@@ -17,7 +17,7 @@
     WORKS</span
   >
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The seed used to deterministically alter canvas hash values.">
       <label for="fp-canvas-seed">CANVAS SEED</label>
       <input id="fp-canvas-seed"
         type="number"
@@ -28,7 +28,7 @@
         class="input-field"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The seed used to deterministically alter audio hash values.">
       <label for="fp-audio-seed">AUDIO SEED</label>
       <input id="fp-audio-seed"
         type="number"

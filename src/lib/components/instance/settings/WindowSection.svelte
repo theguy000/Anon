@@ -17,7 +17,7 @@
   bind:open
 >
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The outer width of the browser window.">
       <label for="fp-outer-width">OUTER WIDTH</label><input id="fp-outer-width"
         type="number"
         min="1"
@@ -27,7 +27,7 @@
         class="input-field"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The outer height of the browser window.">
       <label for="fp-outer-height">OUTER HEIGHT</label><input id="fp-outer-height"
         type="number"
         min="1"
@@ -39,7 +39,7 @@
     </div>
   </div>
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The inner width of the browser window's viewport.">
       <label for="fp-inner-width">INNER WIDTH</label><input id="fp-inner-width"
         type="number"
         min="1"
@@ -49,7 +49,7 @@
         class="input-field"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The inner height of the browser window's viewport.">
       <label for="fp-inner-height">INNER HEIGHT</label><input id="fp-inner-height"
         type="number"
         min="1"
@@ -61,7 +61,7 @@
     </div>
   </div>
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The horizontal distance of the left border of the window from the left border of the screen.">
       <label for="fp-screen-x">SCREEN X</label><input id="fp-screen-x"
         type="number"
         value={numVal(fp.screen_x)}
@@ -70,7 +70,7 @@
         class="input-field"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The vertical distance of the top border of the window from the top border of the screen.">
       <label for="fp-screen-y">SCREEN Y</label><input id="fp-screen-y"
         type="number"
         value={numVal(fp.screen_y)}

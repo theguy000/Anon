@@ -36,7 +36,7 @@
   bind:open
 >
   <div class="field-row">
-    <div class="field third">
+    <div class="field third" data-tooltip="The simulated latitude coordinate.">
       <label for="fp-latitude">LATITUDE</label>
       <input id="fp-latitude"
         type="number"
@@ -49,7 +49,7 @@
         class="input-field"
       />
     </div>
-    <div class="field third">
+    <div class="field third" data-tooltip="The simulated longitude coordinate.">
       <label for="fp-longitude">LONGITUDE</label>
       <input id="fp-longitude"
         type="number"
@@ -62,7 +62,7 @@
         class="input-field"
       />
     </div>
-    <div class="field third">
+    <div class="field third" data-tooltip="The simulated accuracy of the coordinates in meters.">
       <label for="fp-accuracy-m">ACCURACY (M)</label>
       <input id="fp-accuracy-m"
         type="number"
@@ -75,7 +75,7 @@
       />
     </div>
   </div>
-  <div class="field">
+  <div class="field" data-tooltip="The simulated timezone of the user.">
     <label for="fp-timezone">TIMEZONE</label>
     <select id="fp-timezone"
       value={fp.timezone ?? ""}
@@ -86,7 +86,7 @@
       {#each timezones as tz}<option value={tz}>{tz}</option>{/each}
     </select>
   </div>
-  <div class="field">
+  <div class="field" data-tooltip="Select a preset locale to auto-fill language and region codes.">
     <label for="fp-locale-preset">LOCALE PRESET</label>
     <select id="fp-locale-preset"
       value={selectedLocale}
@@ -98,7 +98,7 @@
     </select>
   </div>
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The simulated language code (e.g. en).">
       <label for="fp-language-code">LANGUAGE CODE</label>
       <input id="fp-language-code"
         type="text"
@@ -108,7 +108,7 @@
         class="input-field mono"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The simulated region code (e.g. US).">
       <label for="fp-region-code">REGION CODE</label>
       <input id="fp-region-code"
         type="text"

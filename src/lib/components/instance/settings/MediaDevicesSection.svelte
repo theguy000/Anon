@@ -15,7 +15,7 @@
   bind:open
 >
   <div class="field-row">
-    <div class="field third">
+    <div class="field third" data-tooltip="The number of simulated microphone devices.">
       <label for="fp-microphones">MICROPHONES</label>
       <select id="fp-microphones"
         value={fp.media_micros ?? ""}
@@ -26,7 +26,7 @@
         {#each MEDIA_COUNTS as n}<option value={n}>{n}</option>{/each}
       </select>
     </div>
-    <div class="field third">
+    <div class="field third" data-tooltip="The number of simulated webcam devices.">
       <label for="fp-webcams">WEBCAMS</label>
       <select id="fp-webcams"
         value={fp.media_webcams ?? ""}
@@ -37,7 +37,7 @@
         {#each MEDIA_COUNTS as n}<option value={n}>{n}</option>{/each}
       </select>
     </div>
-    <div class="field third">
+    <div class="field third" data-tooltip="The number of simulated speaker devices.">
       <label for="fp-speakers">SPEAKERS</label>
       <select id="fp-speakers"
         value={fp.media_speakers ?? ""}

@@ -21,7 +21,7 @@
     AUTOMATICALLY</span
   >
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The public IPv4 address disclosed via WebRTC.">
       <label for="fp-public-ipv4">PUBLIC IPV4</label><input id="fp-public-ipv4"
         type="text"
         value={fp.webrtc_ipv4 ?? ""}
@@ -30,7 +30,7 @@
         class="input-field mono"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The public IPv6 address disclosed via WebRTC.">
       <label for="fp-public-ipv6">PUBLIC IPV6</label><input id="fp-public-ipv6"
         type="text"
         value={fp.webrtc_ipv6 ?? ""}
@@ -41,7 +41,7 @@
     </div>
   </div>
   <div class="field-row">
-    <div class="field half">
+    <div class="field half" data-tooltip="The local IPv4 address disclosed via WebRTC.">
       <label for="fp-local-ipv4">LOCAL IPV4</label><input id="fp-local-ipv4"
         type="text"
         value={fp.webrtc_local_ipv4 ?? ""}
@@ -50,7 +50,7 @@
         class="input-field mono"
       />
     </div>
-    <div class="field half">
+    <div class="field half" data-tooltip="The local IPv6 address disclosed via WebRTC.">
       <label for="fp-local-ipv6">LOCAL IPV6</label><input id="fp-local-ipv6"
         type="text"
         value={fp.webrtc_local_ipv6 ?? ""}

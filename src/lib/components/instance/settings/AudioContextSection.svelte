@@ -15,7 +15,7 @@
   bind:open
 >
   <div class="field-row">
-    <div class="field third">
+    <div class="field third" data-tooltip="The sample rate in samples per second.">
       <label for="fp-sample-rate">SAMPLE RATE</label>
       <select id="fp-sample-rate"
         value={fp.audio_sample_rate ?? ""}
@@ -28,7 +28,7 @@
           >{/each}
       </select>
     </div>
-    <div class="field third">
+    <div class="field third" data-tooltip="The estimated latency of the audio output device.">
       <label for="fp-output-latency-s">OUTPUT LATENCY (S)</label>
       <input id="fp-output-latency-s"
         type="number"
@@ -40,7 +40,7 @@
         class="input-field"
       />
     </div>
-    <div class="field third">
+    <div class="field third" data-tooltip="The maximum number of channels the audio device supports.">
       <label for="fp-max-channels">MAX CHANNELS</label>
       <select id="fp-max-channels"
         value={fp.audio_max_channel_count ?? ""}

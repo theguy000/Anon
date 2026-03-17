@@ -15,7 +15,7 @@
   ].filter((v) => v != null).length} SET"
   bind:open
 >
-  <div class="field">
+  <div class="field" data-tooltip="The User-Agent header sent with HTTP requests.">
     <label for="fp-user-agent-header">USER-AGENT HEADER</label>
     <input id="fp-user-agent-header"
       type="text"
@@ -25,7 +25,7 @@
       class="input-field mono"
     />
   </div>
-  <div class="field">
+  <div class="field" data-tooltip="The Accept-Language header sent with HTTP requests.">
     <label for="fp-accept-language-header">ACCEPT-LANGUAGE HEADER</label>
     <input id="fp-accept-language-header"
       type="text"
@@ -35,7 +35,7 @@
       class="input-field mono"
     />
   </div>
-  <div class="field">
+  <div class="field" data-tooltip="The Accept-Encoding header sent with HTTP requests.">
     <label for="fp-accept-encoding-header">ACCEPT-ENCODING HEADER</label>
     <input id="fp-accept-encoding-header"
       type="text"

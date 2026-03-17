@@ -8,7 +8,7 @@
 </script>
 
 <SettingsSection title="BEHAVIOR" bind:open>
-  <div class="toggle-item">
+  <div class="toggle-item" data-tooltip="Simulate natural human mouse movement behavior.">
     <div class="label-group">
       <label for="fp-humanize-cursor">HUMANIZE CURSOR</label><span class="field-hint"
         >HUMAN-LIKE MOUSE MOVEMENT CURVES</span
@@ -23,7 +23,7 @@
       /><span class="slider"></span></label
     >
   </div>
-  <div class="toggle-item mt">
+  <div class="toggle-item mt" data-tooltip="Show the simulated cursor in the browser view.">
     <div class="label-group">
       <label for="fp-show-cursor">SHOW CURSOR</label><span class="field-hint"
         >DISPLAY CURSOR POSITION IN VIEW</span
@@ -38,7 +38,7 @@
       /><span class="slider"></span></label
     >
   </div>
-  <div class="toggle-item mt">
+  <div class="toggle-item mt" data-tooltip="State whether the browser is able to display PDF files.">
     <div class="label-group">
       <label for="fp-pdf-viewer-enabled">PDF VIEWER ENABLED</label><span class="field-hint"
         >navigator.pdfViewerEnabled PROPERTY</span
