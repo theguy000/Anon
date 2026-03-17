@@ -14,10 +14,8 @@
     selectedWebglPreset = val;
     if (val === "") {
       // AUTO
-      fp.webgl_renderer = null;
-      fp.webgl_vendor = null;
+      fp = { ...fp, webgl_renderer: null, webgl_vendor: null };
       customWebgl = false;
-      fp = fp;
       return;
     }
     if (val === "custom") {
@@ -28,10 +26,8 @@
     if (isNaN(idx)) return;
     const combos = $presetDerivedOptions.webglCombos;
     if (idx >= 0 && idx < combos.length) {
-      fp.webgl_renderer = combos[idx].renderer;
-      fp.webgl_vendor = combos[idx].vendor;
+      fp = { ...fp, webgl_renderer: combos[idx].renderer, webgl_vendor: combos[idx].vendor };
       customWebgl = false;
-      fp = fp;
     }
   }
 </script>

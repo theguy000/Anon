@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::camoufox::get_app_dir;
@@ -128,7 +128,7 @@ pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
 }
 
 fn ensure_user_js(
-    instance_dir: &PathBuf,
+    instance_dir: &Path,
     proxy: &Option<String>,
     persist_data: bool,
 ) -> io::Result<()> {
@@ -158,14 +158,14 @@ fn ensure_user_js(
     }
 
     // Proxy settings
-    if let Some(_) = proxy {
+    if proxy.is_some() {
         user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
     }
 
     fs::write(user_js_path, user_js_content)
 }
 
-fn cleanup_instance_data(instance_dir: &PathBuf) -> io::Result<()> {
+fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
     for entry in fs::read_dir(instance_dir)? {
         let entry = entry?;
         let path = entry.path();
