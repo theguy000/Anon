@@ -93,6 +93,9 @@ pub struct FingerprintConfig {
     pub media_webcams: Option<u32>,
     pub media_speakers: Option<u32>,
 
+    // Speech Voices
+    pub speech_voices: Option<Vec<String>>,
+
     // Behavior
     pub humanize: Option<bool>,
     pub showcursor: Option<bool>,

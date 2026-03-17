@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import { updateInstanceSettings } from "$lib/store";
-  import type { FingerprintConfig } from "$lib/store";
+  import type { FingerprintConfig, InstanceConfig } from "$lib/store";
 
   // Sections
   import NavigatorSection from "./settings/NavigatorSection.svelte";
@@ -27,7 +27,7 @@
   const dispatch = createEventDispatcher();
 
   export let show = false;
-  export let instance: any;
+  export let instance: InstanceConfig;
 
   let fp: FingerprintConfig = {};
   let saving = false;
@@ -112,7 +112,7 @@
       <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} />
       <HttpHeadersSection bind:fp bind:open={sections["headers"]} />
       <BatterySection bind:fp bind:open={sections["battery"]} />
-      <SpeechVoicesSection bind:open={sections["voices"]} />
+      <SpeechVoicesSection bind:fp bind:open={sections["voices"]} />
       <MediaDevicesSection bind:fp bind:open={sections["media"]} />
       <BehaviorSection bind:fp bind:open={sections["behavior"]} />
       <AdvancedSection bind:fp bind:open={sections["advanced"]} />

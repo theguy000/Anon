@@ -88,6 +88,9 @@ export interface FingerprintConfig {
   media_webcams?: number | null;
   media_speakers?: number | null;
 
+  // Speech Voices
+  speech_voices?: string[] | null;
+
   // Behavior
   humanize?: boolean | null;
   showcursor?: boolean | null;
@@ -99,9 +102,18 @@ export interface FingerprintConfig {
   memory_saver?: boolean | null;
 }
 
+export interface InstanceConfig {
+  id: string;
+  name: string;
+  proxy: string | null;
+  persist_data: boolean;
+  created_at: number;
+  fingerprint?: FingerprintConfig | null;
+}
+
 export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
-export const instances = writable<any[]>([]);
+export const instances = writable<InstanceConfig[]>([]);
 export const isLaunching = writable<string | null>(null);
 export const settings = writable<{ skip_wipe_confirmation: boolean }>({ skip_wipe_confirmation: false });
 
@@ -139,7 +151,7 @@ export async function startDownload() {
 
 export async function loadInstances() {
   try {
-    const list = await invoke<any[]>('list_instances');
+    const list = await invoke<InstanceConfig[]>('list_instances');
     instances.set(list);
   } catch (e) {
     console.error('Failed to list instances', e);

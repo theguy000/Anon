@@ -1,10 +1,11 @@
 <script lang="ts">
   import { deleteInstance, launchInstance, isLaunching, togglePersistence, settings, updateSettings } from '$lib/store';
+  import type { InstanceConfig } from '$lib/store';
   import { get } from 'svelte/store';
   import WipeDataModal from '$lib/components/instance/WipeDataModal.svelte';
   import InstanceSettingsModal from '$lib/components/instance/InstanceSettingsModal.svelte';
 
-  export let instance: any;
+  export let instance: InstanceConfig;
   export let compact = false;
 
   let showConfirm = false;
