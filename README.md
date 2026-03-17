@@ -1,6 +1,12 @@
-# Anon Instance Manager
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="Anon Browser" width="128" />
+</p>
 
-Anon is a lightweight, open-source instance manager for Camoufox, a privacy-focused browser built on Firefox.
+<h1 align="center">Anon Browser</h1>
+
+<p align="center">
+  A lightweight, open-source instance manager for Camoufox, a privacy-focused browser built on Firefox.
+</p>
 
 ## Features
 
