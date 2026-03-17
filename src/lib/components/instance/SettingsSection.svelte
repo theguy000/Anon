@@ -1,11 +1,14 @@
 <script lang="ts">
   export let title: string;
+  export let titleTooltip: string = "";
   export let hint: string = "";
   export let open: boolean = false;
 </script>
 
 <div class="section">
-  <button class="section-header" type="button" on:click={() => (open = !open)}>
+  <button class="section-header" type="button" on:click={() => (open = !open)}
+    data-tooltip={titleTooltip || undefined}
+  >
     <span class="chevron">{open ? "▼" : "▶"}</span>
     {title}
     {#if hint}

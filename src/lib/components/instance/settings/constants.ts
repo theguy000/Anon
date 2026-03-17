@@ -157,6 +157,20 @@ export const LOCALES: { label: string; lang: string; region: string }[] = [
   { label: "Custom…", lang: "", region: "" },
 ];
 
+export const WINDOW_PRESETS = [
+  { label: "1024 × 768", w: 1024, h: 768 },
+  { label: "1280 × 720 (HD)", w: 1280, h: 720 },
+  { label: "1280 × 800", w: 1280, h: 800 },
+  { label: "1366 × 768", w: 1366, h: 768 },
+  { label: "1440 × 900", w: 1440, h: 900 },
+  { label: "1536 × 864", w: 1536, h: 864 },
+  { label: "1600 × 900", w: 1600, h: 900 },
+  { label: "1680 × 1050", w: 1680, h: 1050 },
+  { label: "1920 × 1080 (FHD)", w: 1920, h: 1080 },
+  { label: "2560 × 1440 (QHD)", w: 2560, h: 1440 },
+  { label: "3840 × 2160 (4K)", w: 3840, h: 2160 },
+];
+
 export const MEDIA_COUNTS = [0, 1, 2, 3, 4];
 
 export let timezones: string[] = [];

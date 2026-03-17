@@ -36,6 +36,7 @@
 </script>
 
 <SettingsSection title="SCREEN & DISPLAY"
+  titleTooltip="Monitor resolution — the physical display size reported to websites"
   hint="{[
     fp.screen_width,
     fp.screen_height,
