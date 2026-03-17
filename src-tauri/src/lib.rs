@@ -1,5 +1,6 @@
 mod camoufox;
 mod instances;
+mod settings;
 
 #[tauri::command]
 async fn check_camoufox(app: tauri::AppHandle) -> Result<bool, String> {
@@ -27,6 +28,16 @@ async fn toggle_persistence(app: tauri::AppHandle, id: String, enabled: bool) ->
 }
 
 #[tauri::command]
+async fn get_settings(app: tauri::AppHandle) -> settings::AppSettings {
+    settings::load_settings(&app).await
+}
+
+#[tauri::command]
+async fn update_settings(app: tauri::AppHandle, settings: settings::AppSettings) -> Result<(), String> {
+    settings::save_settings(&app, &settings).await
+}
+
+#[tauri::command]
 async fn delete_instance(app: tauri::AppHandle, id: String) -> Result<(), String> {
     instances::delete_instance(&app, id).await
 }
@@ -47,7 +58,9 @@ pub fn run() {
             create_instance,
             delete_instance,
             launch_instance,
-            toggle_persistence
+            toggle_persistence,
+            get_settings,
+            update_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

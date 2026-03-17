@@ -9,7 +9,8 @@
     instances 
   } from '$lib/store';
   import { get } from 'svelte/store';
-  import InstanceCard from '$lib/components/InstanceCard.svelte';
+  import InstanceCard from '$lib/components/instance/InstanceCard.svelte';
+  import Modal from '$lib/components/ui/Modal.svelte';
 
   let showCreateModal = false;
   let newInstanceName = '';
@@ -124,59 +125,55 @@
   </div>
 {/if}
 
-{#if showCreateModal}
-  <div class="modal-backdrop">
-    <div class="modal bento-panel">
-      <div class="modal-header">
-        <h3>NEW INSTANCE</h3>
-        <button class="close-btn" aria-label="Close modal" on:click={() => showCreateModal = false}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      <form on:submit={handleCreate}>
-        <div class="form-group">
-          <label for="name">NAME</label>
-          <input 
-            type="text" 
-            id="name" 
-            bind:value={newInstanceName} 
-            placeholder="E.G. WORK" 
-            required 
-            class="input-field"
-            class:input-error={!!nameError}
-          />
-          {#if nameError}
-            <span class="error-text">{nameError}</span>
-          {/if}
-        </div>
-        <div class="form-group">
-          <label for="proxy">PROXY</label>
-          <input 
-            type="text" 
-            id="proxy" 
-            bind:value={newInstanceProxy} 
-            placeholder="OPTIONAL" 
-            class="input-field"
-          />
-        </div>
-        <div class="form-group row-group">
-          <div class="label-group">
-            <label for="persist">RETAIN DATA</label>
-            <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="persist" bind:checked={newInstancePersistData}>
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="btn" on:click={() => showCreateModal = false}>CANCEL</button>
-          <button type="submit" class="btn btn-primary" disabled={!newInstanceName.trim()}>CREATE</button>
-        </div>
-      </form>
-    </div>
+<Modal show={showCreateModal} on:close={() => showCreateModal = false}>
+  <div class="modal-header">
+    <h3>NEW INSTANCE</h3>
+    <button class="close-btn" aria-label="Close modal" on:click={() => showCreateModal = false}>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
   </div>
-{/if}
+  <form on:submit={handleCreate}>
+    <div class="form-group">
+      <label for="name">NAME</label>
+      <input 
+        type="text" 
+        id="name" 
+        bind:value={newInstanceName} 
+        placeholder="E.G. WORK" 
+        required 
+        class="input-field"
+        class:input-error={!!nameError}
+      />
+      {#if nameError}
+        <span class="error-text">{nameError}</span>
+      {/if}
+    </div>
+    <div class="form-group">
+      <label for="proxy">PROXY</label>
+      <input 
+        type="text" 
+        id="proxy" 
+        bind:value={newInstanceProxy} 
+        placeholder="OPTIONAL" 
+        class="input-field"
+      />
+    </div>
+    <div class="form-group row-group">
+      <div class="label-group">
+        <label for="persist">RETAIN DATA</label>
+        <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="persist" bind:checked={newInstancePersistData}>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" on:click={() => showCreateModal = false}>CANCEL</button>
+      <button type="submit" class="btn btn-primary" disabled={!newInstanceName.trim()}>CREATE</button>
+    </div>
+  </form>
+</Modal>
 
 <style>
   .loading-state {
@@ -319,35 +316,6 @@
   .view-toggle:hover {
     border-color: var(--text-main);
     color: var(--text-main);
-  }
-
-  /* Modal */
-  .modal-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-  }
-
-  .modal {
-    width: 100%;
-    max-width: 450px;
-    padding: 2.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
   }
 
   .modal-header h3 {

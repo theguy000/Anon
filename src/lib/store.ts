@@ -6,6 +6,7 @@ export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
 export const instances = writable<any[]>([]);
 export const isLaunching = writable<string | null>(null);
+export const settings = writable<{ skip_wipe_confirmation: boolean }>({ skip_wipe_confirmation: false });
 
 export async function checkInstallation() {
   try {
@@ -13,6 +14,7 @@ export async function checkInstallation() {
     camoufoxDownloaded.set(isDownloaded);
     if (isDownloaded) {
       await loadInstances();
+      await loadSettings();
     }
   } catch (e) {
     console.error('Failed to check installation', e);
@@ -83,5 +85,23 @@ export async function launchInstance(id: string) {
     console.error('Failed to launch instance', e);
   } finally {
     isLaunching.set(null);
+  }
+}
+
+export async function loadSettings() {
+  try {
+    const s = await invoke<any>('get_settings');
+    settings.set(s);
+  } catch (e) {
+    console.error('Failed to load settings', e);
+  }
+}
+
+export async function updateSettings(newSettings: any) {
+  try {
+    await invoke('update_settings', { settings: newSettings });
+    settings.set(newSettings);
+  } catch (e) {
+    console.error('Failed to update settings', e);
   }
 }

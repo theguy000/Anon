@@ -1,8 +1,42 @@
 <script lang="ts">
-  import { deleteInstance, launchInstance, isLaunching, togglePersistence } from '$lib/store';
+  import { deleteInstance, launchInstance, isLaunching, togglePersistence, settings, updateSettings } from '$lib/store';
+  import { get } from 'svelte/store';
+  import WipeDataModal from '$lib/components/instance/WipeDataModal.svelte';
 
   export let instance: any;
   export let compact = false;
+
+  let showConfirm = false;
+
+  function handlePersistenceToggle(e: Event) {
+    const target = e.currentTarget as HTMLInputElement;
+    const checked = target.checked;
+
+    if (!checked) {
+      const s = get(settings);
+      if (s.skip_wipe_confirmation) {
+        togglePersistence(instance.id, false);
+      } else {
+        showConfirm = true;
+      }
+      // Prevent immediate toggle visually until confirmed
+      target.checked = true;
+    } else {
+      togglePersistence(instance.id, true);
+    }
+  }
+
+  function confirmDisable(e: CustomEvent) {
+    if (e.detail?.dontShowAgain) {
+      updateSettings({ skip_wipe_confirmation: true });
+    }
+    togglePersistence(instance.id, false);
+    showConfirm = false;
+  }
+
+  function cancelDisable() {
+    showConfirm = false;
+  }
 
   function formatDate(timestamp: number) {
     return new Date(timestamp * 1000).toLocaleDateString();
@@ -18,7 +52,7 @@
       <input 
         type="checkbox" 
         checked={instance.persist_data} 
-        on:change={(e) => togglePersistence(instance.id, e.currentTarget.checked)}
+        on:change={handlePersistenceToggle}
       >
       <span class="slider"></span>
     </label>
@@ -62,7 +96,7 @@
         <input 
           type="checkbox" 
           checked={instance.persist_data} 
-          on:change={(e) => togglePersistence(instance.id, e.currentTarget.checked)}
+          on:change={handlePersistenceToggle}
         >
         <span class="slider"></span>
       </label>
@@ -88,6 +122,17 @@
   </div>
 </div>
 {/if}
+
+<WipeDataModal 
+  show={showConfirm}
+  title="WIPE DATA?"
+  message="TURNING OFF DATA RETENTION WILL PERMANENTLY DELETE ALL HISTORY, LOGINS, AND COOKIES FOR THIS INSTANCE."
+  confirmText="WIPE AND DISABLE"
+  danger={true}
+  showSkipToggle={true}
+  on:confirm={confirmDisable}
+  on:cancel={cancelDisable}
+/>
 
 <style>
   /* Grid card layout */

@@ -58,6 +58,28 @@ fn ensure_user_js(instance_dir: &PathBuf, proxy: &Option<String>, persist_data: 
     fs::write(user_js_path, user_js_content)
 }
 
+fn cleanup_instance_data(instance_dir: &PathBuf) -> io::Result<()> {
+    for entry in fs::read_dir(instance_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = path.file_name().and_then(|n| n.to_str());
+        
+        // Preserve essential config files
+        if let Some(name) = file_name {
+            if name == "anon_config.json" || name == "user.js" {
+                continue;
+            }
+        }
+        
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, String> {
     let profiles_dir = get_profiles_dir(app).await;
     let mut instances = Vec::new();
@@ -175,6 +197,12 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             
             // Immediately update user.js
             let _ = ensure_user_js(&instance_dir, &config.proxy, config.persist_data);
+
+            // If disabling, clean up data
+            if !enabled {
+                let _ = cleanup_instance_data(&instance_dir);
+            }
+            
             return Ok(());
         }
     }
