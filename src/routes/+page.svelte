@@ -16,7 +16,7 @@
   let newInstanceName = '';
   let newInstanceProxy = '';
   let newInstancePersistData = true;
-  let viewMode: 'grid' | 'list' = 'grid';
+  let viewMode: 'grid' | 'list' = 'list';
   let nameError = '';
 
   $: if (newInstanceName) nameError = '';
