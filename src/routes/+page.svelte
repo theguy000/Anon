@@ -19,6 +19,32 @@
   let viewMode: 'grid' | 'list' = 'list';
   let nameError = '';
 
+  type SortField = 'name' | 'created_at';
+  type SortDir = 'asc' | 'desc';
+  let sortField: SortField = (localStorage.getItem('sort_field') as SortField) ?? 'created_at';
+  let sortDir: SortDir = (localStorage.getItem('sort_dir') as SortDir) ?? 'desc';
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortField = field;
+      sortDir = field === 'name' ? 'asc' : 'desc';
+    }
+    localStorage.setItem('sort_field', sortField);
+    localStorage.setItem('sort_dir', sortDir);
+  }
+
+  $: sortedInstances = [...$instances].sort((a, b) => {
+    if (sortField === 'name') {
+      const cmp = a.name.localeCompare(b.name);
+      return sortDir === 'asc' ? cmp : -cmp;
+    } else {
+      const cmp = a.created_at - b.created_at;
+      return sortDir === 'asc' ? cmp : -cmp;
+    }
+  });
+
   $: if (newInstanceName) nameError = '';
 
   onMount(() => {
@@ -119,14 +145,28 @@
       <div class={viewMode === 'grid' ? 'instances-grid' : 'instances-list'}>
         {#if viewMode === 'list'}
           <div class="list-header">
-            <span class="col-name">NAME</span>
+            <button
+              class="col-name sort-btn"
+              class:sort-active={sortField === 'name'}
+              on:click={() => toggleSort('name')}
+            >
+              NAME
+              <span class="sort-arrow">{sortField === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+            </button>
             <span class="col-proxy">PROXY</span>
             <span class="col-setting">RETAIN DATA</span>
-            <span class="col-date">CREATED</span>
+            <button
+              class="col-date sort-btn"
+              class:sort-active={sortField === 'created_at'}
+              on:click={() => toggleSort('created_at')}
+            >
+              CREATED
+              <span class="sort-arrow">{sortField === 'created_at' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+            </button>
             <span class="col-actions">ACTIONS</span>
           </div>
         {/if}
-        {#each $instances as instance (instance.id)}
+        {#each sortedInstances as instance (instance.id)}
           <InstanceCard {instance} compact={viewMode === 'list'} />
         {/each}
       </div>
@@ -321,6 +361,39 @@
   .col-setting { width: 80px; text-align: center; }
   .col-date { width: 100px; text-align: left; }
   .col-actions { width: 140px; text-align: right; }
+
+  .sort-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: color 0.15s ease;
+    text-transform: uppercase;
+  }
+
+  .sort-btn:hover {
+    color: var(--text-main);
+  }
+
+  .sort-btn.sort-active {
+    color: var(--text-main);
+  }
+
+  .sort-arrow {
+    font-size: 0.6rem;
+    opacity: 0.6;
+  }
+
+  .sort-btn.sort-active .sort-arrow {
+    opacity: 1;
+  }
 
   .header-actions {
     display: flex;
