@@ -54,6 +54,8 @@
     selectedWebglPreset = "";
     selectedLocale = "";
     customWebgl = !!instance.fingerprint?.webgl_renderer;
+    globalCategory = instance.fingerprint?.global_category ?? "";
+    globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
   }
 
   // ── Save / Reset ───────────────────────────────────────────────────────────
@@ -105,6 +107,9 @@
   async function handleSave() {
     saving = true;
     try {
+      // Persist the global preset selection
+      fp.global_category = globalCategory || null;
+      fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
       await updateInstanceSettings(instance.id, fp);
       dispatch("close");
     } catch (e) {
@@ -119,6 +124,8 @@
     selectedWebglPreset = "";
     selectedLocale = "";
     customWebgl = false;
+    globalCategory = "";
+    globalPresetIndex = -1;
   }
   function handleClose() {
     dispatch("close");

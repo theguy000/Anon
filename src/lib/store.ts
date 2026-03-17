@@ -100,6 +100,10 @@ export interface FingerprintConfig {
   allow_main_world?: boolean | null;
   force_scope_access?: boolean | null;
   memory_saver?: boolean | null;
+
+  // Global Preset Selection
+  global_category?: string | null;
+  global_preset_index?: number | null;
 }
 
 export interface InstanceConfig {

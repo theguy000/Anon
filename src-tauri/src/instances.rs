@@ -105,6 +105,10 @@ pub struct FingerprintConfig {
     pub allow_main_world: Option<bool>,
     pub force_scope_access: Option<bool>,
     pub memory_saver: Option<bool>,
+
+    // Global Preset Selection (persisted so it survives restart)
+    pub global_category: Option<String>,
+    pub global_preset_index: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
