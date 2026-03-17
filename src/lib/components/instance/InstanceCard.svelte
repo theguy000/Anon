@@ -230,7 +230,7 @@
   .instance-row {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
+    gap: 2rem;
     padding: 0.75rem 1.25rem;
     transition: border-color 0.2s ease;
   }
@@ -249,6 +249,8 @@
   .row-setting {
     display: flex;
     align-items: center;
+    width: 80px;
+    justify-content: center;
   }
 
   .row-proxy {
@@ -266,12 +268,15 @@
     color: var(--text-muted);
     letter-spacing: 0.05em;
     white-space: nowrap;
+    width: 100px;
+    text-align: left;
   }
 
   .row-actions {
     display: flex;
     gap: 0.5rem;
-    margin-left: auto;
+    width: 140px;
+    justify-content: flex-end;
   }
 
   .btn-sm {

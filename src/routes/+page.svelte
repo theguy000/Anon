@@ -117,6 +117,15 @@
       </div>
     {:else}
       <div class={viewMode === 'grid' ? 'instances-grid' : 'instances-list'}>
+        {#if viewMode === 'list'}
+          <div class="list-header">
+            <span class="col-name">NAME</span>
+            <span class="col-proxy">PROXY</span>
+            <span class="col-setting">RETAIN DATA</span>
+            <span class="col-date">CREATED</span>
+            <span class="col-actions">ACTIONS</span>
+          </div>
+        {/if}
         {#each $instances as instance (instance.id)}
           <InstanceCard {instance} compact={viewMode === 'list'} />
         {/each}
@@ -294,6 +303,24 @@
     flex-direction: column;
     gap: 0.5rem;
   }
+
+  .list-header {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    padding: 0 1.25rem 0.5rem 1.25rem;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--panel-border);
+    margin-bottom: 0.5rem;
+  }
+
+  .col-name { min-width: 120px; }
+  .col-proxy { flex: 1; }
+  .col-setting { width: 80px; text-align: center; }
+  .col-date { width: 100px; text-align: left; }
+  .col-actions { width: 140px; text-align: right; }
 
   .header-actions {
     display: flex;
