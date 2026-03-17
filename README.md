@@ -28,8 +28,8 @@
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/anon-instance-manager.git
-   cd anon-instance-manager
+   git clone https://github.com/theguy000/Anon.git
+   cd Anon
    ```
 
 2. Install dependencies:
