@@ -57,41 +57,43 @@
   }
 
   // ── Save / Reset ───────────────────────────────────────────────────────────
+  // Mapping from preset fields → fp fields: [presetSection, presetKey, fpKey]
+  const PRESET_TO_FP: [keyof Preset, string, keyof FingerprintConfig][] = [
+    ["navigator", "userAgent",           "user_agent"],
+    ["navigator", "platform",            "platform"],
+    ["navigator", "hardwareConcurrency", "hardware_concurrency"],
+    ["navigator", "maxTouchPoints",      "max_touch_points"],
+    ["screen",    "width",               "screen_width"],
+    ["screen",    "height",              "screen_height"],
+    ["screen",    "colorDepth",          "color_depth"],
+    ["screen",    "availWidth",          "screen_avail_width"],
+    ["screen",    "availHeight",         "screen_avail_height"],
+    ["screen",    "devicePixelRatio",    "device_pixel_ratio"],
+    ["webgl",     "unmaskedVendor",      "webgl_vendor"],
+    ["webgl",     "unmaskedRenderer",    "webgl_renderer"],
+  ];
+
   function applyGlobalPreset() {
     if (globalCategory && globalPresetIndex >= 0) {
       const presets = $fingerprintPresets[globalCategory];
       if (presets && presets[globalPresetIndex]) {
         const preset = presets[globalPresetIndex];
-        
-        // Navigator
-        if (preset.navigator) {
-          if (preset.navigator.userAgent !== undefined) fp.user_agent = preset.navigator.userAgent;
-          if (preset.navigator.platform !== undefined) fp.platform = preset.navigator.platform;
-          if (preset.navigator.hardwareConcurrency !== undefined) fp.hardware_concurrency = preset.navigator.hardwareConcurrency;
-          if (preset.navigator.maxTouchPoints !== undefined) fp.max_touch_points = preset.navigator.maxTouchPoints;
+
+        // Apply mapped fields
+        for (const [section, presetKey, fpKey] of PRESET_TO_FP) {
+          const sectionObj = preset[section];
+          if (sectionObj && typeof sectionObj === "object" && presetKey in sectionObj) {
+            const val = (sectionObj as unknown as Record<string, unknown>)[presetKey];
+            if (val !== undefined) (fp as Record<string, unknown>)[fpKey] = val;
+          }
         }
 
-        // Screen
-        if (preset.screen) {
-          if (preset.screen.width !== undefined) fp.screen_width = preset.screen.width;
-          if (preset.screen.height !== undefined) fp.screen_height = preset.screen.height;
-          if (preset.screen.colorDepth !== undefined) fp.color_depth = preset.screen.colorDepth;
-          if (preset.screen.availWidth !== undefined) fp.screen_avail_width = preset.screen.availWidth;
-          if (preset.screen.availHeight !== undefined) fp.screen_avail_height = preset.screen.availHeight;
-          if (preset.screen.devicePixelRatio !== undefined) fp.device_pixel_ratio = preset.screen.devicePixelRatio;
-          selectedScreenPreset = "";
-        }
-
-        // WebGL
-        if (preset.webgl) {
-          if (preset.webgl.unmaskedVendor !== undefined) fp.webgl_vendor = preset.webgl.unmaskedVendor;
-          if (preset.webgl.unmaskedRenderer !== undefined) fp.webgl_renderer = preset.webgl.unmaskedRenderer;
-          customWebgl = true;
-          selectedWebglPreset = "custom";
-        }
-
-        // Voices
+        // Top-level fields
         if (preset.speechVoices !== undefined) fp.speech_voices = preset.speechVoices;
+
+        // Side effects
+        if (preset.screen) selectedScreenPreset = "";
+        if (preset.webgl) { customWebgl = true; selectedWebglPreset = "custom"; }
 
         // Trigger Svelte reactivity — spread into a new object so that
         // bind:fp in child components sees a new reference and re-renders.
