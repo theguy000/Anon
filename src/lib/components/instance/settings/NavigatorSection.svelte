@@ -1,17 +1,12 @@
 <script lang="ts">
   import SettingsSection from "../SettingsSection.svelte";
   import type { FingerprintConfig } from "$lib/store";
+  import { presetDerivedOptions } from "$lib/store";
   import {
-    setSelectStr,
-    setSelectNum,
     setBool,
   } from "./utils";
   import {
-    NAV_USER_AGENTS,
-    PLATFORMS,
     NAV_OSCPUS,
-    CONCURRENCY_OPTS,
-    TOUCH_POINTS,
     NAV_BUILD_IDS,
     NAV_APP_NAMES,
     NAV_PRODUCT_SUBS,
@@ -19,6 +14,28 @@
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
+
+  // Reactive two-way sync: fp prop → local select values → fp prop
+  // This ensures selects update when fp changes externally (e.g. global preset apply)
+  $: uaVal = fp.user_agent ?? "";
+  $: platformVal = fp.platform ?? "";
+  $: oscpuVal = fp.oscpu ?? "";
+  $: concurrencyVal = fp.hardware_concurrency != null ? String(fp.hardware_concurrency) : "";
+  $: touchVal = fp.max_touch_points != null ? String(fp.max_touch_points) : "";
+  $: dntVal = fp.do_not_track ?? "";
+  $: buildIdVal = fp.build_id ?? "";
+  $: appNameVal = fp.app_name ?? "";
+  $: productSubVal = fp.product_sub ?? "";
+
+
+  function setStr(field: keyof FingerprintConfig, val: string) {
+    (fp as any)[field] = val === "" ? null : val;
+    fp = fp;
+  }
+  function setNumStr(field: keyof FingerprintConfig, val: string) {
+    (fp as any)[field] = val === "" ? null : Number(val);
+    fp = fp;
+  }
 </script>
 
 <SettingsSection title="NAVIGATOR"
@@ -33,12 +50,12 @@
   >
     <label for="fp-user-agent">USER AGENT</label>
     <select id="fp-user-agent"
-      value={fp.user_agent ?? ""}
-      on:change={(e) => fp = setSelectStr(fp, "user_agent", e)}
+      bind:value={uaVal}
+      on:change={() => setStr("user_agent", uaVal)}
       class="input-field"
     >
       <option value="">AUTO</option>
-      {#each NAV_USER_AGENTS as ua}<option value={ua}>{ua}</option>{/each}
+      {#each $presetDerivedOptions.userAgents as ua}<option value={ua}>{ua}</option>{/each}
     </select>
   </div>
   <div class="field-row">
@@ -48,12 +65,12 @@
     >
       <label for="fp-platform">PLATFORM</label>
       <select id="fp-platform"
-        value={fp.platform ?? ""}
-        on:change={(e) => fp = setSelectStr(fp, "platform", e)}
+        bind:value={platformVal}
+        on:change={() => setStr("platform", platformVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
-        {#each PLATFORMS as p}<option value={p}>{p}</option>{/each}
+        {#each $presetDerivedOptions.platforms as p}<option value={p}>{p}</option>{/each}
       </select>
     </div>
     <div
@@ -62,8 +79,8 @@
     >
       <label for="fp-oscpu">OSCPU</label>
       <select id="fp-oscpu"
-        value={fp.oscpu ?? ""}
-        on:change={(e) => fp = setSelectStr(fp, "oscpu", e)}
+        bind:value={oscpuVal}
+        on:change={() => setStr("oscpu", oscpuVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
@@ -78,12 +95,12 @@
     >
       <label for="fp-hardware-concurrency">HARDWARE CONCURRENCY</label>
       <select id="fp-hardware-concurrency"
-        value={fp.hardware_concurrency ?? ""}
-        on:change={(e) => fp = setSelectNum(fp, "hardware_concurrency", e)}
+        bind:value={concurrencyVal}
+        on:change={() => setNumStr("hardware_concurrency", concurrencyVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
-        {#each CONCURRENCY_OPTS as n}<option value={n}>{n} CORES</option
+        {#each $presetDerivedOptions.hardwareConcurrencies as n}<option value={String(n)}>{n} CORES</option
           >{/each}
       </select>
     </div>
@@ -93,12 +110,12 @@
     >
       <label for="fp-max-touch-points">MAX TOUCH POINTS</label>
       <select id="fp-max-touch-points"
-        value={fp.max_touch_points ?? ""}
-        on:change={(e) => fp = setSelectNum(fp, "max_touch_points", e)}
+        bind:value={touchVal}
+        on:change={() => setNumStr("max_touch_points", touchVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
-        {#each TOUCH_POINTS as n}<option value={n}
+        {#each $presetDerivedOptions.maxTouchPoints as n}<option value={String(n)}
             >{n}
             {n === 0
               ? "(DESKTOP)"
@@ -116,8 +133,8 @@
     >
       <label for="fp-do-not-track">DO NOT TRACK</label>
       <select id="fp-do-not-track"
-        value={fp.do_not_track ?? ""}
-        on:change={(e) => fp = setSelectStr(fp, "do_not_track", e)}
+        bind:value={dntVal}
+        on:change={() => setStr("do_not_track", dntVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
@@ -132,8 +149,8 @@
     >
       <label for="fp-build-id">BUILD ID</label>
       <select id="fp-build-id"
-        value={fp.build_id ?? ""}
-        on:change={(e) => fp = setSelectStr(fp, "build_id", e)}
+        bind:value={buildIdVal}
+        on:change={() => setStr("build_id", buildIdVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
@@ -148,8 +165,8 @@
     >
       <label for="fp-app-name">APP NAME</label>
       <select id="fp-app-name"
-        value={fp.app_name ?? ""}
-        on:change={(e) => fp = setSelectStr(fp, "app_name", e)}
+        bind:value={appNameVal}
+        on:change={() => setStr("app_name", appNameVal)}
         class="input-field"
       >
         <option value="">AUTO</option>
@@ -159,8 +176,8 @@
     <div class="field half" data-tooltip="The build number of the product.">
       <label for="fp-product-sub">PRODUCT SUB</label>
       <select id="fp-product-sub"
-        value={fp.product_sub ?? ""}
-        on:change={(e) => fp = setSelectStr(fp, "product_sub", e)}
+        bind:value={productSubVal}
+        on:change={() => setStr("product_sub", productSubVal)}
         class="input-field"
       >
         <option value="">AUTO</option>

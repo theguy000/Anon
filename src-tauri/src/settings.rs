@@ -1,20 +1,12 @@
+use crate::camoufox::get_app_dir;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
-use crate::camoufox::get_app_dir;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     pub skip_wipe_confirmation: bool,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            skip_wipe_confirmation: false,
-        }
-    }
 }
 
 pub async fn get_settings_path(app: &AppHandle) -> PathBuf {

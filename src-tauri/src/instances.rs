@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use std::path::{Path, PathBuf};
+use tauri::AppHandle;
 
 use crate::camoufox::get_app_dir;
 
@@ -127,10 +127,14 @@ pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
     path
 }
 
-fn ensure_user_js(instance_dir: &PathBuf, proxy: &Option<String>, persist_data: bool) -> io::Result<()> {
+fn ensure_user_js(
+    instance_dir: &Path,
+    proxy: &Option<String>,
+    persist_data: bool,
+) -> io::Result<()> {
     let user_js_path = instance_dir.join("user.js");
     let mut user_js_content = String::from("// Anon Instance Preferences\n");
-    
+
     // Persistence preferences
     if persist_data {
         user_js_content.push_str("user_pref(\"browser.sessionhistory.max_entries\", 50);\n");
@@ -154,26 +158,26 @@ fn ensure_user_js(instance_dir: &PathBuf, proxy: &Option<String>, persist_data: 
     }
 
     // Proxy settings
-    if let Some(_) = proxy {
+    if proxy.is_some() {
         user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
     }
 
     fs::write(user_js_path, user_js_content)
 }
 
-fn cleanup_instance_data(instance_dir: &PathBuf) -> io::Result<()> {
+fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
     for entry in fs::read_dir(instance_dir)? {
         let entry = entry?;
         let path = entry.path();
         let file_name = path.file_name().and_then(|n| n.to_str());
-        
+
         // Preserve essential config files
         if let Some(name) = file_name {
             if name == "anon_config.json" || name == "user.js" {
                 continue;
             }
         }
-        
+
         if path.is_dir() {
             fs::remove_dir_all(path)?;
         } else {
@@ -205,7 +209,12 @@ pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, Stri
     Ok(instances)
 }
 
-pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String>, persist_data: bool) -> Result<InstanceConfig, String> {
+pub async fn create_instance(
+    app: &AppHandle,
+    name: String,
+    proxy: Option<String>,
+    persist_data: bool,
+) -> Result<InstanceConfig, String> {
     let instances = list_instances(app).await?;
     if instances.iter().any(|i| i.name.eq_ignore_ascii_case(&name)) {
         return Err("An instance with this name already exists".to_string());
@@ -213,7 +222,7 @@ pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String
 
     let profiles_dir = get_profiles_dir(app).await;
     let id = uuid::Uuid::new_v4().to_string();
-    
+
     let instance_dir = profiles_dir.join(&id);
     fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
 
@@ -243,7 +252,7 @@ pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String
 pub async fn delete_instance(app: &AppHandle, id: String) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(id);
-    
+
     if instance_dir.exists() {
         fs::remove_dir_all(instance_dir).map_err(|e| e.to_string())?;
     }
@@ -253,7 +262,7 @@ pub async fn delete_instance(app: &AppHandle, id: String) -> Result<(), String> 
 pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
-    
+
     if !instance_dir.exists() {
         return Err("Instance profile not found".to_string());
     }
@@ -264,14 +273,21 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
         if let Ok(contents) = fs::read_to_string(config_path) {
             if let Ok(config) = serde_json::from_str::<InstanceConfig>(&contents) {
                 (config.proxy, config.persist_data)
-            } else { (None, true) }
-        } else { (None, true) }
-    } else { (None, true) };
+            } else {
+                (None, true)
+            }
+        } else {
+            (None, true)
+        }
+    } else {
+        (None, true)
+    };
 
     // Update user.js on every launch to ensure preferences are applied
     let _ = ensure_user_js(&instance_dir, &proxy, persist_data);
 
-    let bin_path = crate::camoufox::get_camoufox_binary(app).await
+    let bin_path = crate::camoufox::get_camoufox_binary(app)
+        .await
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
     // Spawn detached process
@@ -287,7 +303,7 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
 pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
-    
+
     if !instance_dir.exists() {
         return Err("Instance profile not found".to_string());
     }
@@ -298,7 +314,7 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             config.persist_data = enabled;
             let config_json = serde_json::to_string_pretty(&config).unwrap();
             fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
-            
+
             // Immediately update user.js
             let _ = ensure_user_js(&instance_dir, &config.proxy, config.persist_data);
 
@@ -306,15 +322,19 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             if !enabled {
                 let _ = cleanup_instance_data(&instance_dir);
             }
-            
+
             return Ok(());
         }
     }
-    
+
     Err("Failed to update instance config".to_string())
 }
 
-pub async fn update_instance_settings(app: &AppHandle, id: String, fingerprint: FingerprintConfig) -> Result<(), String> {
+pub async fn update_instance_settings(
+    app: &AppHandle,
+    id: String,
+    fingerprint: FingerprintConfig,
+) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
 

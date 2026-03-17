@@ -1,8 +1,8 @@
 <script lang="ts">
   import SettingsSection from "../SettingsSection.svelte";
   import type { FingerprintConfig } from "$lib/store";
+  import { presetDerivedOptions } from "$lib/store";
   import { setStr, setBool } from "./utils";
-  import { WEBGL_PRESETS } from "./constants";
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
@@ -10,28 +10,25 @@
   export let customWebgl = false;
 
   function applyWebglPreset(e: Event) {
-    const idx = parseInt((e.target as HTMLSelectElement).value);
-    selectedWebglPreset = (e.target as HTMLSelectElement).value;
-    if (isNaN(idx)) {
-      customWebgl = true;
-      return;
-    }
-    const p = WEBGL_PRESETS[idx];
-    if (p.label === "Custom…") {
-      customWebgl = true;
-      return;
-    }
-    if (p.label === "AUTO") {
-      fp.webgl_renderer = null;
-      fp.webgl_vendor = null;
+    const val = (e.target as HTMLSelectElement).value;
+    selectedWebglPreset = val;
+    if (val === "") {
+      // AUTO
+      fp = { ...fp, webgl_renderer: null, webgl_vendor: null };
       customWebgl = false;
-      fp = fp;
       return;
     }
-    fp.webgl_renderer = p.renderer;
-    fp.webgl_vendor = p.vendor;
-    customWebgl = false;
-    fp = fp;
+    if (val === "custom") {
+      customWebgl = true;
+      return;
+    }
+    const idx = parseInt(val);
+    if (isNaN(idx)) return;
+    const combos = $presetDerivedOptions.webglCombos;
+    if (idx >= 0 && idx < combos.length) {
+      fp = { ...fp, webgl_renderer: combos[idx].renderer, webgl_vendor: combos[idx].vendor };
+      customWebgl = false;
+    }
   }
 </script>
 
@@ -48,8 +45,8 @@
       class="input-field"
     >
       <option value="">AUTO — BROWSERFORGE</option>
-      {#each WEBGL_PRESETS as p, i}<option value={i}>{p.label}</option
-        >{/each}
+      {#each $presetDerivedOptions.webglCombos as p, i}<option value={i}>{p.label}</option>{/each}
+      <option value="custom">Custom…</option>
     </select>
     <span class="field-hint"
       >⚠ MUST USE REAL DEVICE PROFILES — RANDOM VALUES WILL BE DETECTED</span
