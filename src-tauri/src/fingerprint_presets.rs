@@ -50,8 +50,8 @@ pub static FINGERPRINT_DICT: OnceLock<HashMap<String, Vec<Preset>>> = OnceLock::
 pub fn get_presets() -> &'static HashMap<String, Vec<Preset>> {
     FINGERPRINT_DICT.get_or_init(|| {
         let json_str = include_str!("fingerprint-presets.json");
-        let parsed: FingerprintPresets = serde_json::from_str(json_str)
-            .expect("Failed to parse fingerprint-presets.json");
+        let parsed: FingerprintPresets =
+            serde_json::from_str(json_str).expect("Failed to parse fingerprint-presets.json");
         parsed.presets
     })
 }

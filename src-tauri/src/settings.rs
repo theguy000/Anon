@@ -1,8 +1,8 @@
+use crate::camoufox::get_app_dir;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
-use crate::camoufox::get_app_dir;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppSettings {
