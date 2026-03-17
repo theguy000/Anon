@@ -47,13 +47,22 @@ export async function loadInstances() {
   }
 }
 
-export async function createInstance(name: string, proxy?: string) {
+export async function createInstance(name: string, proxy?: string, persistData: boolean = true) {
   try {
-    await invoke('create_instance', { name, proxy });
+    await invoke('create_instance', { name, proxy, persistData });
     await loadInstances();
   } catch (e) {
     console.error('Failed to create instance', e);
     throw e;
+  }
+}
+
+export async function togglePersistence(id: string, enabled: boolean) {
+  try {
+    await invoke('toggle_persistence', { id, enabled });
+    await loadInstances();
+  } catch (e) {
+    console.error('Failed to toggle persistence', e);
   }
 }
 

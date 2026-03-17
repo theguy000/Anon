@@ -17,8 +17,13 @@ async fn list_instances(app: tauri::AppHandle) -> Result<Vec<instances::Instance
 }
 
 #[tauri::command]
-async fn create_instance(app: tauri::AppHandle, name: String, proxy: Option<String>) -> Result<instances::InstanceConfig, String> {
-    instances::create_instance(&app, name, proxy).await
+async fn create_instance(app: tauri::AppHandle, name: String, proxy: Option<String>, persist_data: bool) -> Result<instances::InstanceConfig, String> {
+    instances::create_instance(&app, name, proxy, persist_data).await
+}
+
+#[tauri::command]
+async fn toggle_persistence(app: tauri::AppHandle, id: String, enabled: bool) -> Result<(), String> {
+    instances::toggle_persistence(&app, id, enabled).await
 }
 
 #[tauri::command]
@@ -41,7 +46,8 @@ pub fn run() {
             list_instances,
             create_instance,
             delete_instance,
-            launch_instance
+            launch_instance,
+            toggle_persistence
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

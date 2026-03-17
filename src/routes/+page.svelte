@@ -14,6 +14,7 @@
   let showCreateModal = false;
   let newInstanceName = '';
   let newInstanceProxy = '';
+  let newInstancePersistData = true;
   let viewMode: 'grid' | 'list' = 'grid';
   let nameError = '';
 
@@ -38,11 +39,13 @@
     try {
       await createInstance(
         name, 
-        newInstanceProxy.trim() || undefined
+        newInstanceProxy.trim() || undefined,
+        newInstancePersistData
       );
       // Reset form and close modal on success
       newInstanceName = '';
       newInstanceProxy = '';
+      newInstancePersistData = true;
       showCreateModal = false;
     } catch (error) {
       console.error('Error creating instance:', error);
@@ -155,6 +158,16 @@
             placeholder="OPTIONAL" 
             class="input-field"
           />
+        </div>
+        <div class="form-group row-group">
+          <div class="label-group">
+            <label for="persist">RETAIN DATA</label>
+            <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="persist" bind:checked={newInstancePersistData}>
+            <span class="slider"></span>
+          </label>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn" on:click={() => showCreateModal = false}>CANCEL</button>
@@ -405,6 +418,27 @@
     justify-content: flex-end;
     gap: 1rem;
     margin-top: 1rem;
+  }
+
+  .row-group {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--panel-border);
+    padding-top: 1.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .label-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .sub-label {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
   }
 
   @keyframes spin {

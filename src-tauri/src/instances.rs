@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -10,6 +11,7 @@ pub struct InstanceConfig {
     pub id: String,
     pub name: String,
     pub proxy: Option<String>,
+    pub persist_data: bool,
     pub created_at: i64,
 }
 
@@ -20,6 +22,40 @@ pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
         fs::create_dir_all(&path).unwrap();
     }
     path
+}
+
+fn ensure_user_js(instance_dir: &PathBuf, proxy: &Option<String>, persist_data: bool) -> io::Result<()> {
+    let user_js_path = instance_dir.join("user.js");
+    let mut user_js_content = String::from("// Anon Instance Preferences\n");
+    
+    // Persistence preferences
+    if persist_data {
+        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_entries\", 50);\n");
+        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_total_viewers\", -1);\n");
+        user_js_content.push_str("user_pref(\"browser.formfill.enable\", true);\n");
+        user_js_content.push_str("user_pref(\"browser.places.interactions.enabled\", true);\n");
+        user_js_content.push_str("user_pref(\"browser.urlbar.suggest.history\", true);\n");
+        user_js_content.push_str("user_pref(\"signon.rememberSignons\", true);\n");
+        user_js_content.push_str("user_pref(\"privacy.clearOnShutdown.openWindows\", false);\n");
+        user_js_content.push_str("user_pref(\"browser.sessionstore.resume_from_crash\", true);\n");
+    } else {
+        // Explicitly disable if turned off
+        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_entries\", 0);\n");
+        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_total_viewers\", 0);\n");
+        user_js_content.push_str("user_pref(\"browser.formfill.enable\", false);\n");
+        user_js_content.push_str("user_pref(\"browser.places.interactions.enabled\", false);\n");
+        user_js_content.push_str("user_pref(\"browser.urlbar.suggest.history\", false);\n");
+        user_js_content.push_str("user_pref(\"signon.rememberSignons\", false);\n");
+        user_js_content.push_str("user_pref(\"privacy.clearOnShutdown.openWindows\", true);\n");
+        user_js_content.push_str("user_pref(\"browser.sessionstore.resume_from_crash\", false);\n");
+    }
+
+    // Proxy settings
+    if let Some(_) = proxy {
+        user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
+    }
+
+    fs::write(user_js_path, user_js_content)
 }
 
 pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, String> {
@@ -44,7 +80,7 @@ pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, Stri
     Ok(instances)
 }
 
-pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String>) -> Result<InstanceConfig, String> {
+pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String>, persist_data: bool) -> Result<InstanceConfig, String> {
     let instances = list_instances(app).await?;
     if instances.iter().any(|i| i.name.eq_ignore_ascii_case(&name)) {
         return Err("An instance with this name already exists".to_string());
@@ -60,6 +96,7 @@ pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String
         id: id.clone(),
         name,
         proxy,
+        persist_data,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -71,14 +108,8 @@ pub async fn create_instance(app: &AppHandle, name: String, proxy: Option<String
     let config_json = serde_json::to_string_pretty(&config).unwrap();
     fs::write(config_path, config_json).map_err(|e| e.to_string())?;
 
-    // Generate basic prefs.js for Camoufox proxy if needed
-    if let Some(ref p) = config.proxy {
-        let prefs_path = instance_dir.join("prefs.js");
-        // Note: Basic template. For real proxy config in Firefox, we'd parse the URL
-        // and set network.proxy.type, network.proxy.http, etc.
-        let prefs_content = format!("// Anon Instance Prefs\nuser_pref(\"network.proxy.type\", 1);\n");
-        let _ = fs::write(prefs_path, prefs_content);
-    }
+    // Generate user.js for persistence and proxy settings
+    let _ = ensure_user_js(&instance_dir, &config.proxy, config.persist_data);
 
     Ok(config)
 }
@@ -101,6 +132,19 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
         return Err("Instance profile not found".to_string());
     }
 
+    // Load config to get settings
+    let config_path = instance_dir.join("anon_config.json");
+    let (proxy, persist_data) = if config_path.exists() {
+        if let Ok(contents) = fs::read_to_string(config_path) {
+            if let Ok(config) = serde_json::from_str::<InstanceConfig>(&contents) {
+                (config.proxy, config.persist_data)
+            } else { (None, true) }
+        } else { (None, true) }
+    } else { (None, true) };
+
+    // Update user.js on every launch to ensure preferences are applied
+    let _ = ensure_user_js(&instance_dir, &proxy, persist_data);
+
     let bin_path = crate::camoufox::get_camoufox_binary(app).await
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
@@ -112,4 +156,28 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
         .map_err(|e| format!("Failed to launch instance: {}", e))?;
 
     Ok(())
+}
+
+pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(&id);
+    
+    if !instance_dir.exists() {
+        return Err("Instance profile not found".to_string());
+    }
+
+    let config_path = instance_dir.join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.persist_data = enabled;
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            
+            // Immediately update user.js
+            let _ = ensure_user_js(&instance_dir, &config.proxy, config.persist_data);
+            return Ok(());
+        }
+    }
+    
+    Err("Failed to update instance config".to_string())
 }

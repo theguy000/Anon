@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { deleteInstance, launchInstance, isLaunching } from '$lib/store';
+  import { deleteInstance, launchInstance, isLaunching, togglePersistence } from '$lib/store';
 
   export let instance: any;
   export let compact = false;
@@ -13,6 +13,16 @@
 <div class="instance-row bento-panel">
   <span class="row-name">{instance.name.toUpperCase()}</span>
   <span class="row-proxy">{instance.proxy || 'NONE'}</span>
+  <div class="row-setting">
+    <label class="switch">
+      <input 
+        type="checkbox" 
+        checked={instance.persist_data} 
+        on:change={(e) => togglePersistence(instance.id, e.currentTarget.checked)}
+      >
+      <span class="slider"></span>
+    </label>
+  </div>
   <span class="row-date">{formatDate(instance.created_at)}</span>
   <div class="row-actions">
     <button 
@@ -42,6 +52,20 @@
     <div class="detail">
       <span class="label">PROXY</span>
       <span class="value">{instance.proxy || 'NONE'}</span>
+    </div>
+    <div class="detail setting-detail">
+      <div class="label-group">
+        <span class="label">RETAIN DATA</span>
+        <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
+      </div>
+      <label class="switch">
+        <input 
+          type="checkbox" 
+          checked={instance.persist_data} 
+          on:change={(e) => togglePersistence(instance.id, e.currentTarget.checked)}
+        >
+        <span class="slider"></span>
+      </label>
     </div>
   </div>
 
@@ -116,6 +140,28 @@
     color: var(--text-muted);
   }
 
+  .sub-label {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+  }
+
+  .label-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .setting-detail {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--panel-border);
+  }
+
   .value {
     font-size: 0.85rem;
     font-family: monospace;
@@ -153,6 +199,11 @@
     font-weight: 400;
     letter-spacing: 0.1em;
     min-width: 120px;
+  }
+
+  .row-setting {
+    display: flex;
+    align-items: center;
   }
 
   .row-proxy {
