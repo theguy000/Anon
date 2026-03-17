@@ -111,6 +111,187 @@ pub struct FingerprintConfig {
     pub global_preset_index: Option<i32>,
 }
 
+/// Convert a FingerprintConfig into a JSON object that camoufox understands
+/// (property keys from camoufox's properties.json).
+/// Only non-None fields are included so camoufox falls back to its defaults.
+fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+
+    // ── Helper macros ────────────────────────────────────────────────────
+    macro_rules! set_str {
+        ($key:expr, $field:expr) => {
+            if let Some(ref v) = $field {
+                m.insert($key.to_string(), serde_json::Value::String(v.clone()));
+            }
+        };
+    }
+    macro_rules! set_u32 {
+        ($key:expr, $field:expr) => {
+            if let Some(v) = $field {
+                m.insert($key.to_string(), serde_json::json!(v));
+            }
+        };
+    }
+    macro_rules! set_i32 {
+        ($key:expr, $field:expr) => {
+            if let Some(v) = $field {
+                m.insert($key.to_string(), serde_json::json!(v));
+            }
+        };
+    }
+    macro_rules! set_f64 {
+        ($key:expr, $field:expr) => {
+            if let Some(v) = $field {
+                m.insert($key.to_string(), serde_json::json!(v));
+            }
+        };
+    }
+    macro_rules! set_bool {
+        ($key:expr, $field:expr) => {
+            if let Some(v) = $field {
+                m.insert($key.to_string(), serde_json::json!(v));
+            }
+        };
+    }
+
+    // ── Navigator ────────────────────────────────────────────────────────
+    set_str!("navigator.userAgent", fp.user_agent);
+    set_str!("navigator.platform", fp.platform);
+    set_str!("navigator.oscpu", fp.oscpu);
+    set_str!("navigator.appCodeName", fp.app_code_name);
+    set_str!("navigator.appName", fp.app_name);
+    set_str!("navigator.appVersion", fp.app_version);
+    set_str!("navigator.product", fp.product);
+    set_str!("navigator.productSub", fp.product_sub);
+    set_str!("navigator.buildID", fp.build_id);
+    set_u32!("navigator.hardwareConcurrency", fp.hardware_concurrency);
+    set_u32!("navigator.maxTouchPoints", fp.max_touch_points);
+    set_str!("navigator.doNotTrack", fp.do_not_track);
+    set_str!("navigator.language", fp.language);
+    set_bool!("navigator.cookieEnabled", fp.cookie_enabled);
+    set_bool!("navigator.globalPrivacyControl", fp.global_privacy_control);
+    set_bool!("navigator.onLine", fp.online);
+
+    // languages: comma-separated string → JSON array
+    if let Some(ref langs) = fp.languages {
+        let arr: Vec<serde_json::Value> = langs
+            .split(',')
+            .map(|s| serde_json::Value::String(s.trim().to_string()))
+            .collect();
+        m.insert(
+            "navigator.languages".to_string(),
+            serde_json::Value::Array(arr),
+        );
+    }
+
+    // ── Screen & Display ─────────────────────────────────────────────────
+    set_u32!("screen.height", fp.screen_height);
+    set_u32!("screen.width", fp.screen_width);
+    set_u32!("screen.availHeight", fp.screen_avail_height);
+    set_u32!("screen.availWidth", fp.screen_avail_width);
+    set_u32!("screen.availTop", fp.screen_avail_top);
+    set_u32!("screen.availLeft", fp.screen_avail_left);
+    set_u32!("screen.colorDepth", fp.color_depth);
+    set_u32!("screen.pixelDepth", fp.pixel_depth);
+    set_f64!("window.devicePixelRatio", fp.device_pixel_ratio);
+
+    // ── Window ────────────────────────────────────────────────────────
+    set_u32!("window.outerHeight", fp.outer_height);
+    set_u32!("window.outerWidth", fp.outer_width);
+    set_u32!("window.innerHeight", fp.inner_height);
+    set_u32!("window.innerWidth", fp.inner_width);
+    set_i32!("window.screenX", fp.screen_x);
+    set_i32!("window.screenY", fp.screen_y);
+
+    // ── WebGL ────────────────────────────────────────────────────────
+    set_str!("webGl:renderer", fp.webgl_renderer);
+    set_str!("webGl:vendor", fp.webgl_vendor);
+    set_bool!(
+        "webGl:parameters:blockIfNotDefined",
+        fp.webgl_block_if_not_defined
+    );
+
+    // ── Canvas & Audio Seeds ─────────────────────────────────────────
+    set_u32!("canvas:seed", fp.canvas_seed);
+    set_u32!("audio:seed", fp.audio_seed);
+
+    // ── AudioContext ─────────────────────────────────────────────────
+    set_u32!("AudioContext:sampleRate", fp.audio_sample_rate);
+    set_f64!("AudioContext:outputLatency", fp.audio_output_latency);
+    set_u32!("AudioContext:maxChannelCount", fp.audio_max_channel_count);
+
+    // ── Fonts ────────────────────────────────────────────────────────
+    set_u32!("fonts:spacing_seed", fp.fonts_spacing_seed);
+
+    // ── Geolocation, Timezone & Locale ───────────────────────────────
+    set_f64!("geolocation:latitude", fp.geo_latitude);
+    set_f64!("geolocation:longitude", fp.geo_longitude);
+    set_f64!("geolocation:accuracy", fp.geo_accuracy);
+    set_str!("timezone", fp.timezone);
+    set_str!("locale:language", fp.locale_language);
+    set_str!("locale:region", fp.locale_region);
+
+    // ── WebRTC ───────────────────────────────────────────────────────
+    set_str!("webrtc:ipv4", fp.webrtc_ipv4);
+    set_str!("webrtc:ipv6", fp.webrtc_ipv6);
+    set_str!("webrtc:localipv4", fp.webrtc_local_ipv4);
+    set_str!("webrtc:localipv6", fp.webrtc_local_ipv6);
+
+    // ── HTTP Headers ────────────────────────────────────────────────
+    set_str!("headers.User-Agent", fp.header_user_agent);
+    set_str!("headers.Accept-Language", fp.header_accept_language);
+    set_str!("headers.Accept-Encoding", fp.header_accept_encoding);
+
+    // ── Battery ──────────────────────────────────────────────────────
+    set_bool!("battery:charging", fp.battery_charging);
+    set_f64!("battery:chargingTime", fp.battery_charging_time);
+    set_f64!("battery:dischargingTime", fp.battery_discharging_time);
+    set_f64!("battery:level", fp.battery_level);
+
+    // ── Media Devices ───────────────────────────────────────────────
+    set_u32!("mediaDevices:micros", fp.media_micros);
+    set_u32!("mediaDevices:webcams", fp.media_webcams);
+    set_u32!("mediaDevices:speakers", fp.media_speakers);
+
+    // ── Speech Voices ───────────────────────────────────────────────
+    // Stored as ["Name:lang:type", ...], camoufox expects
+    // [{name, lang, voiceUri, isDefault, isLocalService}, ...]
+    if let Some(ref voices) = fp.speech_voices {
+        let arr: Vec<serde_json::Value> = voices
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let parts: Vec<&str> = entry.splitn(3, ':').collect();
+                let name = parts.first().unwrap_or(&"").to_string();
+                let lang = parts.get(1).unwrap_or(&"").to_string();
+                let voice_uri = name.clone();
+                serde_json::json!({
+                    "name": name,
+                    "lang": lang,
+                    "voiceUri": voice_uri,
+                    "isDefault": i == 0,
+                    "isLocalService": parts.get(2).is_none_or(|t| *t == "local")
+                })
+            })
+            .collect();
+        m.insert("voices".to_string(), serde_json::Value::Array(arr));
+    }
+
+    // ── Behavior ─────────────────────────────────────────────────────
+    set_bool!("humanize", fp.humanize);
+    set_bool!("showcursor", fp.showcursor);
+    set_bool!("pdfViewerEnabled", fp.pdf_viewer_enabled);
+
+    // ── Advanced ─────────────────────────────────────────────────────
+    set_bool!("allowMainWorld", fp.allow_main_world);
+    set_bool!("forceScopeAccess", fp.force_scope_access);
+    set_bool!("memorysaver", fp.memory_saver);
+
+    // global_category / global_preset_index are UI-only, not sent.
+
+    serde_json::Value::Object(m)
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InstanceConfig {
     pub id: String,
@@ -271,21 +452,18 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
         return Err("Instance profile not found".to_string());
     }
 
-    // Load config to get settings
+    // Load the full instance config (including fingerprint)
     let config_path = instance_dir.join("anon_config.json");
-    let (proxy, persist_data) = if config_path.exists() {
-        if let Ok(contents) = fs::read_to_string(config_path) {
-            if let Ok(config) = serde_json::from_str::<InstanceConfig>(&contents) {
-                (config.proxy, config.persist_data)
-            } else {
-                (None, true)
-            }
-        } else {
-            (None, true)
-        }
+    let config: Option<InstanceConfig> = if config_path.exists() {
+        fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str(&contents).ok())
     } else {
-        (None, true)
+        None
     };
+
+    let proxy = config.as_ref().and_then(|c| c.proxy.clone());
+    let persist_data = config.as_ref().is_none_or(|c| c.persist_data);
 
     // Update user.js on every launch to ensure preferences are applied
     let _ = ensure_user_js(&instance_dir, &proxy, persist_data);
@@ -294,10 +472,18 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
         .await
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
-    // Spawn detached process
+    // Build the CAMOU_CONFIG JSON from fingerprint settings
+    let camou_config_json = config
+        .as_ref()
+        .and_then(|c| c.fingerprint.as_ref())
+        .map(|fp| build_camou_config(fp).to_string())
+        .unwrap_or_else(|| "{}".to_string());
+
+    // Spawn detached process with CAMOU_CONFIG env var
     std::process::Command::new(bin_path)
         .arg("--profile")
         .arg(&instance_dir)
+        .env("CAMOU_CONFIG", &camou_config_json)
         .spawn()
         .map_err(|e| format!("Failed to launch instance: {}", e))?;
 
