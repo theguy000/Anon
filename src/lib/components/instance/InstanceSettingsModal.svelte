@@ -20,6 +20,8 @@
   import MediaDevicesSection from "./settings/MediaDevicesSection.svelte";
   import BehaviorSection from "./settings/BehaviorSection.svelte";
   import AdvancedSection from "./settings/AdvancedSection.svelte";
+  import { fingerprintPresets } from "$lib/store";
+  import type { Preset } from "$lib/store";
 
   // Styles
   import "./settings/InstanceSettingsModal.css";
@@ -39,17 +41,65 @@
   let selectedLocale = "";
   let customWebgl = false;
 
-  // Initialize on open
+  // Global preset state
+  let globalCategory = "";
+  let globalPresetIndex = -1;
+
+  // Initialize on open — IMPORTANT: do NOT read `fp` inside this block,
+  // or any `fp = ...` assignment will trigger re-initialization and reset values.
   $: if (show && instance) {
     fp = instance.fingerprint ? { ...instance.fingerprint } : {};
     saving = false;
     selectedScreenPreset = "";
     selectedWebglPreset = "";
     selectedLocale = "";
-    customWebgl = !!fp.webgl_renderer;
+    customWebgl = !!instance.fingerprint?.webgl_renderer;
   }
 
   // ── Save / Reset ───────────────────────────────────────────────────────────
+  function applyGlobalPreset() {
+    if (globalCategory && globalPresetIndex >= 0) {
+      const presets = $fingerprintPresets[globalCategory];
+      if (presets && presets[globalPresetIndex]) {
+        const preset = presets[globalPresetIndex];
+        
+        // Navigator
+        if (preset.navigator) {
+          if (preset.navigator.userAgent !== undefined) fp.user_agent = preset.navigator.userAgent;
+          if (preset.navigator.platform !== undefined) fp.platform = preset.navigator.platform;
+          if (preset.navigator.hardwareConcurrency !== undefined) fp.hardware_concurrency = preset.navigator.hardwareConcurrency;
+          if (preset.navigator.maxTouchPoints !== undefined) fp.max_touch_points = preset.navigator.maxTouchPoints;
+        }
+
+        // Screen
+        if (preset.screen) {
+          if (preset.screen.width !== undefined) fp.screen_width = preset.screen.width;
+          if (preset.screen.height !== undefined) fp.screen_height = preset.screen.height;
+          if (preset.screen.colorDepth !== undefined) fp.color_depth = preset.screen.colorDepth;
+          if (preset.screen.availWidth !== undefined) fp.screen_avail_width = preset.screen.availWidth;
+          if (preset.screen.availHeight !== undefined) fp.screen_avail_height = preset.screen.availHeight;
+          if (preset.screen.devicePixelRatio !== undefined) fp.device_pixel_ratio = preset.screen.devicePixelRatio;
+          selectedScreenPreset = "";
+        }
+
+        // WebGL
+        if (preset.webgl) {
+          if (preset.webgl.unmaskedVendor !== undefined) fp.webgl_vendor = preset.webgl.unmaskedVendor;
+          if (preset.webgl.unmaskedRenderer !== undefined) fp.webgl_renderer = preset.webgl.unmaskedRenderer;
+          customWebgl = true;
+          selectedWebglPreset = "custom";
+        }
+
+        // Voices
+        if (preset.speechVoices !== undefined) fp.speech_voices = preset.speechVoices;
+
+        // Trigger Svelte reactivity — spread into a new object so that
+        // bind:fp in child components sees a new reference and re-renders.
+        fp = { ...fp };
+      }
+    }
+  }
+
   async function handleSave() {
     saving = true;
     try {
@@ -101,6 +151,37 @@
     </div>
 
     <div class="settings-body">
+      <div class="global-preset-selector section-group" style="padding: 1rem; border: 1px solid var(--panel-border); background: rgba(255, 255, 255, 0.02); margin-bottom: 1rem;">
+        <h4 style="margin-top: 0; margin-bottom: 15px; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; color: var(--text-primary); border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">GLOBAL PROFILE PRESET</h4>
+        <div class="field-row">
+          <div class="field" style="flex: 1;">
+            <label for="globalCategory">OS Profile</label>
+            <select id="globalCategory" class="input-field" style="font-family: inherit; text-transform: uppercase; letter-spacing: 0.05em;" bind:value={globalCategory} on:change={() => { globalPresetIndex = -1; }}>
+              <option value="">SELECT OS</option>
+              {#each Object.keys($fingerprintPresets || {}) as cat}
+                <option value={cat}>{cat.toUpperCase()}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="field" style="flex: 2;">
+            <label for="globalPresetIndex">Profile Preset</label>
+            <select id="globalPresetIndex" class="input-field" style="font-family: inherit; text-transform: uppercase; letter-spacing: 0.05em;" bind:value={globalPresetIndex} disabled={!globalCategory}>
+              <option value={-1}>SELECT PRESET</option>
+              {#if globalCategory && $fingerprintPresets[globalCategory]}
+                {#each $fingerprintPresets[globalCategory] as preset, i}
+                  <option value={i}>PRESET {i + 1} ({preset.screen?.width}X{preset.screen?.height}, {preset.navigator?.hardwareConcurrency} CORES, {preset.webgl?.unmaskedVendor?.toUpperCase()})</option>
+                {/each}
+              {/if}
+            </select>
+          </div>
+        </div>
+        <div class="action-row" style="margin-top: 15px; text-align: right;">
+           <button class="btn btn-primary" disabled={globalPresetIndex === -1} on:click={applyGlobalPreset}>
+             APPLY GLOBAL PROFILE
+           </button>
+        </div>
+      </div>
+
       <NavigatorSection bind:fp bind:open={sections["nav"]} />
       <ScreenDisplaySection bind:fp bind:open={sections["screen"]} bind:selectedScreenPreset />
       <WindowSection bind:fp bind:open={sections["window"]} />

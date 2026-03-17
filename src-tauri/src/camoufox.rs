@@ -12,6 +12,7 @@ pub struct InstallStatus {
 
 #[derive(Deserialize, Debug)]
 struct GitHubRelease {
+    #[allow(dead_code)]
     tag_name: String,
     assets: Vec<GitHubAsset>,
 }

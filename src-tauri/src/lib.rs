@@ -1,4 +1,5 @@
 mod camoufox;
+mod fingerprint_presets;
 mod instances;
 mod settings;
 
@@ -52,6 +53,11 @@ async fn update_instance_settings(app: tauri::AppHandle, id: String, fingerprint
     instances::update_instance_settings(&app, id, fingerprint).await
 }
 
+#[tauri::command]
+async fn get_fingerprint_presets() -> std::collections::HashMap<String, Vec<fingerprint_presets::Preset>> {
+    fingerprint_presets::get_presets().clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -66,7 +72,8 @@ pub fn run() {
             toggle_persistence,
             get_settings,
             update_settings,
-            update_instance_settings
+            update_instance_settings,
+            get_fingerprint_presets
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

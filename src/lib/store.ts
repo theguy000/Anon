@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
@@ -111,11 +111,103 @@ export interface InstanceConfig {
   fingerprint?: FingerprintConfig | null;
 }
 
+export interface PresetNavigator {
+  userAgent: string | null;
+  platform: string | null;
+  hardwareConcurrency: number | null;
+  maxTouchPoints: number | null;
+}
+
+export interface PresetScreen {
+  width: number | null;
+  height: number | null;
+  colorDepth: number | null;
+  availWidth: number | null;
+  availHeight: number | null;
+  devicePixelRatio: number | null;
+}
+
+export interface PresetWebgl {
+  unmaskedVendor: string | null;
+  unmaskedRenderer: string | null;
+}
+
+export interface Preset {
+  navigator: PresetNavigator | null;
+  screen: PresetScreen | null;
+  webgl: PresetWebgl | null;
+  speechVoices: string[] | null;
+}
+
 export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
 export const instances = writable<InstanceConfig[]>([]);
+export const fingerprintPresets = writable<Record<string, Preset[]>>({});
 export const isLaunching = writable<string | null>(null);
 export const settings = writable<{ skip_wipe_confirmation: boolean }>({ skip_wipe_confirmation: false });
+
+// Derived store: extracts unique dropdown values from all fingerprint presets
+export const presetDerivedOptions = derived(fingerprintPresets, ($presets) => {
+  const uaSet = new Set<string>();
+  const platSet = new Set<string>();
+  const concSet = new Set<number>();
+  const touchSet = new Set<number>();
+  const colorSet = new Set<number>();
+  const dprSet = new Set<number>();
+  const screenMap = new Map<string, { label: string; w: number; h: number; availW: number; availH: number; dpr: number }>();
+  const webglMap = new Map<string, { label: string; renderer: string; vendor: string }>();
+
+  for (const presets of Object.values($presets)) {
+    for (const p of presets) {
+      if (p.navigator) {
+        if (p.navigator.userAgent) uaSet.add(p.navigator.userAgent);
+        if (p.navigator.platform) platSet.add(p.navigator.platform);
+        if (p.navigator.hardwareConcurrency != null) concSet.add(p.navigator.hardwareConcurrency);
+        if (p.navigator.maxTouchPoints != null) touchSet.add(p.navigator.maxTouchPoints);
+      }
+      if (p.screen) {
+        if (p.screen.colorDepth != null) colorSet.add(p.screen.colorDepth);
+        if (p.screen.devicePixelRatio != null) dprSet.add(p.screen.devicePixelRatio);
+        if (p.screen.width != null && p.screen.height != null) {
+          const key = `${p.screen.width}x${p.screen.height}`;
+          if (!screenMap.has(key)) {
+            screenMap.set(key, {
+              label: `${p.screen.width} × ${p.screen.height}`,
+              w: p.screen.width,
+              h: p.screen.height,
+              availW: p.screen.availWidth ?? p.screen.width,
+              availH: p.screen.availHeight ?? p.screen.height,
+              dpr: p.screen.devicePixelRatio ?? 1,
+            });
+          }
+        }
+      }
+      if (p.webgl) {
+        if (p.webgl.unmaskedRenderer && p.webgl.unmaskedVendor) {
+          const key = `${p.webgl.unmaskedVendor}||${p.webgl.unmaskedRenderer}`;
+          if (!webglMap.has(key)) {
+            // Create a short label from vendor
+            const vendor = p.webgl.unmaskedVendor;
+            const renderer = p.webgl.unmaskedRenderer;
+            const shortRenderer = renderer.length > 40 ? renderer.substring(0, 40) + '…' : renderer;
+            webglMap.set(key, { label: `${vendor} — ${shortRenderer}`, renderer, vendor });
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    userAgents: [...uaSet].sort(),
+    platforms: [...platSet].sort(),
+    hardwareConcurrencies: [...concSet].sort((a, b) => a - b),
+    maxTouchPoints: [...touchSet].sort((a, b) => a - b),
+    colorDepths: [...colorSet].sort((a, b) => a - b),
+    devicePixelRatios: [...dprSet].sort((a, b) => a - b),
+    screenPresets: [...screenMap.values()].sort((a, b) => a.w * a.h - b.w * b.h),
+    webglCombos: [...webglMap.values()].sort((a, b) => a.label.localeCompare(b.label)),
+  };
+});
 
 export async function checkInstallation() {
   try {
@@ -124,9 +216,19 @@ export async function checkInstallation() {
     if (isDownloaded) {
       await loadInstances();
       await loadSettings();
+      await loadFingerprintPresets();
     }
   } catch (e) {
     console.error('Failed to check installation', e);
+  }
+}
+
+export async function loadFingerprintPresets() {
+  try {
+    const presets = await invoke<Record<string, Preset[]>>('get_fingerprint_presets');
+    fingerprintPresets.set(presets);
+  } catch (e) {
+    console.error('Failed to load fingerprint presets', e);
   }
 }
 
