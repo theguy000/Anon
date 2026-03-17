@@ -2,11 +2,13 @@
   import { deleteInstance, launchInstance, isLaunching, togglePersistence, settings, updateSettings } from '$lib/store';
   import { get } from 'svelte/store';
   import WipeDataModal from '$lib/components/instance/WipeDataModal.svelte';
+  import InstanceSettingsModal from '$lib/components/instance/InstanceSettingsModal.svelte';
 
   export let instance: any;
   export let compact = false;
 
   let showConfirm = false;
+  let showSettings = false;
 
   function handlePersistenceToggle(e: Event) {
     const target = e.currentTarget as HTMLInputElement;
@@ -59,6 +61,9 @@
   </div>
   <span class="row-date">{formatDate(instance.created_at)}</span>
   <div class="row-actions">
+    <button class="icon-btn" aria-label="Settings" on:click={() => showSettings = true}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
     <button 
       class="btn btn-primary btn-sm" 
       disabled={$isLaunching === instance.id}
@@ -104,6 +109,9 @@
   </div>
 
   <div class="card-actions">
+    <button class="icon-btn" aria-label="Settings" on:click={() => showSettings = true}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
     <button 
       class="btn btn-primary" 
       disabled={$isLaunching === instance.id}
@@ -132,6 +140,12 @@
   showSkipToggle={true}
   on:confirm={confirmDisable}
   on:cancel={cancelDisable}
+/>
+
+<InstanceSettingsModal
+  show={showSettings}
+  {instance}
+  on:close={() => showSettings = false}
 />
 
 <style>
@@ -275,13 +289,31 @@
   .row-actions {
     display: flex;
     gap: 0.5rem;
-    width: 140px;
+    width: 170px;
     justify-content: flex-end;
+    align-items: center;
   }
 
   .btn-sm {
     padding: 0.3rem 0.75rem;
     font-size: 0.7rem;
+  }
+
+  .icon-btn {
+    background: none;
+    border: 1px solid var(--panel-border);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.3rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .icon-btn:hover {
+    border-color: var(--text-main);
+    color: var(--text-main);
   }
 
   /* Shared */
