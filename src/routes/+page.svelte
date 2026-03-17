@@ -69,9 +69,9 @@
         <polygon points="12 22 7 12 17 12 12 22"/>
       </svg>
     </div>
-    <h2>WELCOME TO ANON</h2>
+    <h2>WELCOME TO ANON BROWSER</h2>
     <p class="description">
-      ANON USES AN ISOLATED ENGINE. INSTALL REQUIRED.
+      ANON BROWSER USES AN ISOLATED ENGINE. INSTALL REQUIRED.
     </p>
 
     {#if $installProgress}
