@@ -128,15 +128,15 @@
       // Persist AUTO mode settings
       fp.auto_fingerprint = autoMode || null;
       fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
-      if (autoMode && !autoChangeWindowSize && autoWindowPresetIndex >= 0 && WINDOW_PRESETS[autoWindowPresetIndex]) {
-        const preset = WINDOW_PRESETS[autoWindowPresetIndex];
-        fp.outer_width = preset.w;
-        fp.outer_height = preset.h;
-        fp.inner_width = null;
-        fp.inner_height = null;
-      } else if (autoMode) {
-        fp.outer_width = null;
-        fp.outer_height = null;
+      if (autoMode) {
+        const preset = !autoChangeWindowSize && autoWindowPresetIndex >= 0 ? WINDOW_PRESETS[autoWindowPresetIndex] : null;
+        if (preset) {
+          fp.outer_width = preset.w;
+          fp.outer_height = preset.h;
+        } else {
+          fp.outer_width = null;
+          fp.outer_height = null;
+        }
         fp.inner_width = null;
         fp.inner_height = null;
       }
