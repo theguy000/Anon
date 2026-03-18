@@ -226,6 +226,30 @@ pub fn generate_auto_config(
         }
     }
 
+    // When a fixed window-size preset is chosen, prefer fingerprint presets
+    // whose screen is large enough to accommodate it.
+    if !change_window_size {
+        if let (Some(req_w), Some(req_h)) = (default_outer_width, default_outer_height) {
+            let filtered: Vec<&fingerprint_presets::Preset> = candidates
+                .iter()
+                .copied()
+                .filter(|p| {
+                    p.screen
+                        .as_ref()
+                        .map(|s| {
+                            let aw = s.avail_width.or(s.width).unwrap_or(0);
+                            let ah = s.avail_height.or(s.height).unwrap_or(0);
+                            aw >= req_w && ah >= req_h
+                        })
+                        .unwrap_or(false)
+                })
+                .collect();
+            if !filtered.is_empty() {
+                candidates = filtered;
+            }
+        }
+    }
+
     if candidates.is_empty() {
         return serde_json::json!({});
     }
@@ -234,6 +258,9 @@ pub fn generate_auto_config(
     let preset = candidates[rng.gen_range(0..candidates.len())];
 
     let mut config = serde_json::Map::new();
+
+    // ── Show cursor (default off) ────────────────────────────────────────
+    config.insert("showcursor".into(), serde_json::json!(false));
 
     // ── Navigator ────────────────────────────────────────────────────────
     let mut target_os = "macos"; // default
