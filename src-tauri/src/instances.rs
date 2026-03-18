@@ -541,7 +541,15 @@ pub async fn update_instance_settings(
     app: &AppHandle,
     id: String,
     fingerprint: FingerprintConfig,
-) -> Result<(), String> {
+) -> Result<Vec<crate::fingerprint_validator::FingerprintConflict>, String> {
+    // Validate fingerprint coherence (skipped in AUTO mode)
+    let conflicts = crate::fingerprint_validator::validate_fingerprint(&fingerprint);
+
+    // Return conflicts without persisting so the UI can ask the user to fix them first
+    if !conflicts.is_empty() {
+        return Ok(conflicts);
+    }
+
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
 
@@ -555,7 +563,7 @@ pub async fn update_instance_settings(
             config.fingerprint = Some(fingerprint);
             let config_json = serde_json::to_string_pretty(&config).unwrap();
             fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
-            return Ok(());
+            return Ok(conflicts);
         }
     }
 

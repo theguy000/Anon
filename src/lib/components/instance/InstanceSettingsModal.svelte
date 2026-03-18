@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import { updateInstanceSettings } from "$lib/store";
-  import type { FingerprintConfig, InstanceConfig } from "$lib/store";
+  import type { FingerprintConfig, InstanceConfig, FingerprintConflict } from "$lib/store";
 
   // Sections
   import NavigatorSection from "./settings/NavigatorSection.svelte";
@@ -34,6 +34,7 @@
 
   let fp: FingerprintConfig = {};
   let saving = false;
+  let conflicts: FingerprintConflict[] = [];
   let sections: Record<string, boolean> = {};
 
   // State helpers
@@ -119,8 +120,11 @@
     }
   }
 
+  let conflictsBanner: HTMLDivElement;
+
   async function handleSave() {
     saving = true;
+    conflicts = [];
     try {
       // Persist the global preset selection
       fp.global_category = globalCategory || null;
@@ -140,8 +144,16 @@
         fp.inner_width = null;
         fp.inner_height = null;
       }
-      await updateInstanceSettings(instance.id, fp);
-      dispatch("close");
+      const warnings = await updateInstanceSettings(instance.id, fp);
+      if (warnings.length > 0) {
+        conflicts = warnings;
+        sections["webgl"] = true;
+        requestAnimationFrame(() => {
+          conflictsBanner?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else {
+        dispatch("close");
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -287,7 +299,9 @@
       <NavigatorSection bind:fp bind:open={sections["nav"]} />
       <ScreenDisplaySection bind:fp bind:open={sections["screen"]} bind:selectedScreenPreset />
       <WindowSection bind:fp bind:open={sections["window"]} />
-      <WebGLSection bind:fp bind:open={sections["webgl"]} bind:selectedWebglPreset bind:customWebgl />
+      <div bind:this={conflictsBanner}>
+        <WebGLSection bind:fp bind:open={sections["webgl"]} bind:selectedWebglPreset bind:customWebgl {conflicts} />
+      </div>
       <CanvasAudioSeedsSection bind:fp bind:open={sections["seeds"]} />
       <AudioContextSection bind:fp bind:open={sections["audio"]} />
       <FontsSection bind:fp bind:open={sections["fonts"]} />

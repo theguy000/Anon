@@ -325,10 +325,15 @@ export async function updateSettings(newSettings: any) {
   }
 }
 
-export async function updateInstanceSettings(id: string, fingerprint: FingerprintConfig) {
+export interface FingerprintConflict {
+  message: string;
+}
+
+export async function updateInstanceSettings(id: string, fingerprint: FingerprintConfig): Promise<FingerprintConflict[]> {
   try {
-    await invoke('update_instance_settings', { id, fingerprint });
+    const conflicts = await invoke<FingerprintConflict[]>('update_instance_settings', { id, fingerprint });
     await loadInstances();
+    return conflicts ?? [];
   } catch (e) {
     console.error('Failed to update instance settings', e);
     throw e;

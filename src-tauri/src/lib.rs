@@ -1,6 +1,7 @@
 mod auto_fingerprint;
 mod camoufox;
 mod fingerprint_presets;
+mod fingerprint_validator;
 mod instances;
 mod settings;
 
@@ -66,7 +67,7 @@ async fn update_instance_settings(
     app: tauri::AppHandle,
     id: String,
     fingerprint: instances::FingerprintConfig,
-) -> Result<(), String> {
+) -> Result<Vec<fingerprint_validator::FingerprintConflict>, String> {
     instances::update_instance_settings(&app, id, fingerprint).await
 }
 

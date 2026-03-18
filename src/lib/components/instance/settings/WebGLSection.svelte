@@ -1,6 +1,6 @@
 <script lang="ts">
   import SettingsSection from "../SettingsSection.svelte";
-  import type { FingerprintConfig } from "$lib/store";
+  import type { FingerprintConfig, FingerprintConflict } from "$lib/store";
   import { presetDerivedOptions } from "$lib/store";
   import { setStr, setBool } from "./utils";
 
@@ -8,6 +8,7 @@
   export let open: boolean = false;
   export let selectedWebglPreset = "";
   export let customWebgl = false;
+  export let conflicts: FingerprintConflict[] = [];
 
   function applyWebglPreset(e: Event) {
     const val = (e.target as HTMLSelectElement).value;
@@ -48,10 +49,14 @@
       {#each $presetDerivedOptions.webglCombos as p, i}<option value={i}>{p.label}</option>{/each}
       <option value="custom">Custom…</option>
     </select>
-    <span class="field-hint"
-      >⚠ MUST USE REAL DEVICE PROFILES — RANDOM VALUES WILL BE DETECTED</span
-    >
   </div>
+  {#if conflicts.length > 0}
+    <div class="webgl-conflicts">
+      {#each conflicts as c}
+        <span class="webgl-conflict-msg">⚠ {c.message}</span>
+      {/each}
+    </div>
+  {/if}
   {#if customWebgl}
     <div class="field" data-tooltip="The unmasked renderer string of the WebGL API.">
       <label for="fp-renderer-custom">RENDERER (CUSTOM)</label>
