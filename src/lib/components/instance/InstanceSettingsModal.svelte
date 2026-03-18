@@ -146,9 +146,11 @@
     <div class="settings-header">
       <div class="header-left">
         <h3>FINGERPRINT SETTINGS</h3>
-        {#if instance}<span class="instance-name"
-            >{instance.name.toUpperCase()}</span
-          >{/if}
+        {#if instance}
+          <div class="instance-name">
+            <span class="instance-name-value">{instance.name.toUpperCase()}</span>
+          </div>
+        {/if}
       </div>
       <button class="close-btn" aria-label="Close" on:click={handleClose}>
         <svg
