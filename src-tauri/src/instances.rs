@@ -282,7 +282,11 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
 
     // ── Behavior ─────────────────────────────────────────────────────
     set_bool!("humanize", fp.humanize);
-    set_bool!("showcursor", fp.showcursor);
+    // Default showcursor to false when not explicitly set
+    m.insert(
+        "showcursor".to_string(),
+        serde_json::json!(fp.showcursor.unwrap_or(false)),
+    );
     set_bool!("pdfViewerEnabled", fp.pdf_viewer_enabled);
 
     // ── Advanced ─────────────────────────────────────────────────────
@@ -483,7 +487,7 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
             build_camou_config(fp).to_string()
         }
     } else {
-        "{}".to_string()
+        r#"{"showcursor":false}"#.to_string()
     };
 
     // Spawn detached process with CAMOU_CONFIG env var

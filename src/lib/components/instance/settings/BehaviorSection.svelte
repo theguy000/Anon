@@ -14,10 +14,11 @@
         >HUMAN-LIKE MOUSE MOVEMENT CURVES</span
       >
     </div>
-    <label class="switch"
+    <label class="switch disabled"
       ><input id="fp-humanize-cursor"
         type="checkbox"
         checked={fp.humanize ?? false}
+        disabled
         on:change={(e) =>
           fp = setBool(fp, "humanize", (e.target as HTMLInputElement).checked)}
       /><span class="slider"></span></label
@@ -25,9 +26,8 @@
   </div>
   <div class="toggle-item mt" data-tooltip="Show the simulated cursor in the browser view.">
     <div class="label-group">
-      <label for="fp-show-cursor">SHOW CURSOR</label><span class="field-hint"
-        >DISPLAY CURSOR POSITION IN VIEW</span
-      >
+      <label for="fp-show-cursor">SHOW CURSOR</label>
+      {#if fp.showcursor === true}<span class="field-hint">DISPLAY CURSOR POSITION IN VIEW</span>{/if}
     </div>
     <label class="switch"
       ><input id="fp-show-cursor"

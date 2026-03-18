@@ -211,3 +211,12 @@ input:checked + .slider:before {
   transform: translateX(16px);
   background-color: var(--text-main);
 }
+
+input:disabled + .slider {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+input:disabled + .slider:before {
+  opacity: 0.4;
+}
