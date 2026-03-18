@@ -210,7 +210,11 @@ fn generate_random_voice_subset(target_os: &str) -> Vec<String> {
 // ── Main generation function ────────────────────────────────────────────────
 
 /// Build a complete CAMOU_CONFIG JSON from a random preset.
-pub fn generate_auto_config() -> serde_json::Value {
+pub fn generate_auto_config(
+    change_window_size: bool,
+    default_outer_width: Option<u32>,
+    default_outer_height: Option<u32>,
+) -> serde_json::Value {
     let presets = fingerprint_presets::get_presets();
     let mut rng = rand::thread_rng();
 
@@ -311,16 +315,26 @@ pub fn generate_auto_config() -> serde_json::Value {
         // (any value other than 1.0 is suspicious)
 
         // ── Derive window dimensions from screen ────────────────────────
-        // Browsers don't usually run maximized — pick a random fraction of
-        // the available screen area to feel realistic.
+        // Browsers don't usually run maximized. When enabled, vary window
+        // geometry per launch; otherwise keep deterministic geometry.
         let avail_w = screen.avail_width.or(screen.width).unwrap_or(1920);
         let avail_h = screen.avail_height.or(screen.height).unwrap_or(1080);
 
-        // Random outer size: 75-100% of available dimensions
-        let pct_w = rng.gen_range(75..=100) as f64 / 100.0;
-        let pct_h = rng.gen_range(75..=100) as f64 / 100.0;
-        let outer_w = ((avail_w as f64 * pct_w) as u32).max(800);
-        let outer_h = ((avail_h as f64 * pct_h) as u32).max(600);
+        let (outer_w, outer_h) = if change_window_size {
+            let pct_w = rng.gen_range(75..=100) as f64 / 100.0;
+            let pct_h = rng.gen_range(75..=100) as f64 / 100.0;
+            (
+                ((avail_w as f64 * pct_w) as u32).max(800),
+                ((avail_h as f64 * pct_h) as u32).max(600),
+            )
+        } else if let (Some(w), Some(h)) = (default_outer_width, default_outer_height) {
+            (w.min(avail_w), h.min(avail_h))
+        } else {
+            (
+                ((avail_w as f64 * 0.9) as u32).max(800),
+                ((avail_h as f64 * 0.9) as u32).max(600),
+            )
+        };
 
         config.insert("window.outerWidth".into(), serde_json::json!(outer_w));
         config.insert("window.outerHeight".into(), serde_json::json!(outer_h));
@@ -331,18 +345,24 @@ pub fn generate_auto_config() -> serde_json::Value {
         config.insert("window.innerWidth".into(), serde_json::json!(inner_w));
         config.insert("window.innerHeight".into(), serde_json::json!(inner_h));
 
-        // screenX/screenY: random position within remaining space
+        // screenX/screenY: random position or centered fallback
         let max_x = avail_w.saturating_sub(outer_w);
         let max_y = avail_h.saturating_sub(outer_h);
-        let screen_x = if max_x > 0 {
-            rng.gen_range(0..=max_x) as i32
+        let (screen_x, screen_y) = if change_window_size {
+            (
+                if max_x > 0 {
+                    rng.gen_range(0..=max_x) as i32
+                } else {
+                    0
+                },
+                if max_y > 0 {
+                    rng.gen_range(0..=max_y) as i32
+                } else {
+                    0
+                },
+            )
         } else {
-            0
-        };
-        let screen_y = if max_y > 0 {
-            rng.gen_range(0..=max_y) as i32
-        } else {
-            0
+            ((max_x / 2) as i32, (max_y / 2) as i32)
         };
         config.insert("window.screenX".into(), serde_json::json!(screen_x));
         config.insert("window.screenY".into(), serde_json::json!(screen_y));
