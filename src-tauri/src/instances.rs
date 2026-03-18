@@ -112,6 +112,7 @@ pub struct FingerprintConfig {
 
     // AUTO mode: let camoufox's built-in browserforge handle all fingerprinting
     pub auto_fingerprint: Option<bool>,
+    pub auto_change_window_size: Option<bool>,
 }
 
 /// Convert a FingerprintConfig into a JSON object that camoufox understands
@@ -482,7 +483,12 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
     // Build the CAMOU_CONFIG JSON from fingerprint settings
     let camou_config_json = if let Some(fp) = config.as_ref().and_then(|c| c.fingerprint.as_ref()) {
         if fp.auto_fingerprint == Some(true) {
-            crate::auto_fingerprint::generate_auto_config().to_string()
+            crate::auto_fingerprint::generate_auto_config(
+                fp.auto_change_window_size.unwrap_or(true),
+                fp.outer_width,
+                fp.outer_height,
+            )
+            .to_string()
         } else {
             build_camou_config(fp).to_string()
         }

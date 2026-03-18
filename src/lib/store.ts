@@ -107,6 +107,7 @@ export interface FingerprintConfig {
 
   // AUTO mode: let camoufox's browserforge handle all fingerprinting
   auto_fingerprint?: boolean | null;
+  auto_change_window_size?: boolean | null;
 }
 
 export interface InstanceConfig {

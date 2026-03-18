@@ -20,6 +20,7 @@
   import MediaDevicesSection from "./settings/MediaDevicesSection.svelte";
   import BehaviorSection from "./settings/BehaviorSection.svelte";
   import AdvancedSection from "./settings/AdvancedSection.svelte";
+  import { WINDOW_PRESETS } from "./settings/constants";
   import { fingerprintPresets } from "$lib/store";
   import type { Preset } from "$lib/store";
 
@@ -47,6 +48,8 @@
 
   // AUTO mode state
   let autoMode = false;
+  let autoChangeWindowSize = true;
+  let autoWindowPresetIndex = -1;
   const accentGreen = '#10b981';
   const accentGreenBg = 'rgba(16, 185, 129, 0.05)';
 
@@ -62,6 +65,12 @@
     globalCategory = instance.fingerprint?.global_category ?? "";
     globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
     autoMode = instance.fingerprint?.auto_fingerprint === true;
+    autoChangeWindowSize = instance.fingerprint?.auto_change_window_size !== false;
+    autoWindowPresetIndex = WINDOW_PRESETS.findIndex(
+      (p) =>
+        p.w === instance.fingerprint?.outer_width &&
+        p.h === instance.fingerprint?.outer_height
+    );
   }
 
   // ── Save / Reset ───────────────────────────────────────────────────────────
@@ -118,6 +127,19 @@
       fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
       // Persist AUTO mode settings
       fp.auto_fingerprint = autoMode || null;
+      fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
+      if (autoMode) {
+        const preset = !autoChangeWindowSize && autoWindowPresetIndex >= 0 ? WINDOW_PRESETS[autoWindowPresetIndex] : null;
+        if (preset) {
+          fp.outer_width = preset.w;
+          fp.outer_height = preset.h;
+        } else {
+          fp.outer_width = null;
+          fp.outer_height = null;
+        }
+        fp.inner_width = null;
+        fp.inner_height = null;
+      }
       await updateInstanceSettings(instance.id, fp);
       dispatch("close");
     } catch (e) {
@@ -135,6 +157,8 @@
     globalCategory = "";
     globalPresetIndex = -1;
     autoMode = false;
+    autoChangeWindowSize = true;
+    autoWindowPresetIndex = -1;
   }
   function handleClose() {
     dispatch("close");
@@ -190,6 +214,41 @@
           <p style="margin: 12px 0 0; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 0.03em; line-height: 1.5;">
             Camoufox's built-in browserforge will automatically generate a unique fingerprint on each launch. All fields — navigator, screen, WebGL, fonts, audio, canvas, and more — are handled automatically.
           </p>
+          <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <span style="font-size: 0.58rem; letter-spacing: 0.08em; color: var(--text-primary);">CHANGE WINDOW SIZE EACH LAUNCH</span>
+              <span style="font-size: 0.55rem; letter-spacing: 0.03em; color: var(--text-secondary);">
+                {autoChangeWindowSize
+                  ? 'Randomizes window size and position every launch.'
+                  : 'Keeps window size and position deterministic for the selected profile.'}
+              </span>
+            </div>
+            <button
+              class="btn {autoChangeWindowSize ? 'btn-active' : ''}"
+              style="font-size: 0.58rem; padding: 4px 10px; min-width: 50px; letter-spacing: 0.05em; {autoChangeWindowSize ? `background: ${accentGreen}; color: #000; border-color: ${accentGreen};` : ''}"
+              on:click={() => { autoChangeWindowSize = !autoChangeWindowSize; }}
+            >
+              {autoChangeWindowSize ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px; opacity: {autoChangeWindowSize ? 0.6 : 1};">
+            <label for="auto-window-size-preset" style="font-size: 0.58rem; letter-spacing: 0.08em; color: var(--text-primary);">DEFAULT WINDOW SIZE PRESET</label>
+            <select
+              id="auto-window-size-preset"
+              class="input-field"
+              style="font-size: 0.65rem;"
+              bind:value={autoWindowPresetIndex}
+              disabled={autoChangeWindowSize}
+            >
+              <option value={-1}>AUTO DEFAULT</option>
+              {#each WINDOW_PRESETS as p, i}
+                <option value={i}>{p.label}</option>
+              {/each}
+            </select>
+            <span style="font-size: 0.54rem; letter-spacing: 0.03em; color: var(--text-secondary);">
+              Applies when window-size changing is OFF.
+            </span>
+          </div>
         {/if}
       </div>
 
