@@ -62,14 +62,14 @@ body {
 }
 
 .btn-danger {
-  border-color: var(--text-muted);
-  color: var(--text-muted);
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
 }
 
 .btn-danger:hover {
-  background: var(--text-main);
+  background: var(--accent-danger);
   color: var(--bg-color);
-  border-color: var(--text-main);
+  border-color: var(--accent-danger);
 }
 
 /* Scrollbar */

@@ -121,13 +121,13 @@
   }
 
   .btn-danger {
-    border-color: #ff4444;
-    color: #ff4444;
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
   }
 
   .btn-danger:hover {
-    background: #ff4444;
-    color: black;
+    background: var(--accent-danger);
+    color: var(--bg-color);
   }
 
   .skip-toggle {
