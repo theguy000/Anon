@@ -8,13 +8,24 @@
   A lightweight, open-source instance manager for Camoufox, a privacy-focused browser built on Firefox.
 </p>
 
+## Preview
+
+<p align="center">
+  <img src="static/preview-main.png" alt="Instance Manager" width="700" />
+</p>
+
+<p align="center">
+  <img src="static/preview-fingerprint.png" alt="Fingerprint Settings" width="500" />
+</p>
+
 ## Features
 
 - **Instance Management**: Create, manage, and delete multiple isolated browser instances
+- **Configurable Fingerprints**: Fine-tune browser fingerprints per instance — including Navigator, Screen & Display, Canvas, Audio, WebGL, Fonts, Geolocation, and more
 - **Proxy Support**: Configure proxy settings per instance
 - **Quick Launch**: One-click launch of browser instances
 - **Modern UI**: Clean, minimalist interface with dark mode
-- **Cross-Platform**: Built with Tauri for Windows, macOS, and Linux
+- **Cross-Platform**: Built with Tauri for Windows.
 
 ## Installation
 
