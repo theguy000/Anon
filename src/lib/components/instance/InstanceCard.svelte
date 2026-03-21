@@ -76,10 +76,8 @@
 {#if compact}
 <div class="instance-row bento-panel" class:instance-running={isRunning}>
   <span class="row-name">
+    <span class="status-dot" class:active={isRunning}></span>
     {instance.name.toUpperCase()}
-    {#if isRunning}
-      <span class="running-badge">RUNNING</span>
-    {/if}
   </span>
   <span class="row-proxy">{instance.proxy || 'NONE'}</span>
   <div class="row-setting">
@@ -128,10 +126,8 @@
 <div class="instance-card bento-panel" class:instance-running={isRunning}>
   <div class="card-header">
     <div class="card-title-group">
+      <span class="status-dot" class:active={isRunning}></span>
       <h3>{instance.name.toUpperCase()}</h3>
-      {#if isRunning}
-        <span class="running-badge">RUNNING</span>
-      {/if}
     </div>
     <span class="date">{formatDate(instance.created_at)}</span>
   </div>
@@ -254,19 +250,25 @@
     letter-spacing: 0.1em;
   }
 
-  .running-badge {
-    font-size: 0.55rem;
-    letter-spacing: 0.1em;
-    border: 1px solid var(--accent-running);
-    color: var(--accent-running);
-    padding: 0.15rem 0.4rem;
-    font-weight: 400;
-    animation: pulse-glow 2s ease-in-out infinite;
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--accent-running);
+    flex-shrink: 0;
+    opacity: 0;
+    box-shadow: none;
   }
 
-  @keyframes pulse-glow {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
+  .status-dot.active {
+    opacity: 1;
+    box-shadow: 0 0 4px var(--accent-running);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--accent-running); }
+    50% { opacity: 0.5; box-shadow: 0 0 2px var(--accent-running); }
   }
 
   .date {
@@ -353,10 +355,17 @@
     font-size: 0.85rem;
     font-weight: 400;
     letter-spacing: 0.1em;
-    min-width: 120px;
+    flex: 1;
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    position: relative;
+    padding-left: 14px;
+  }
+
+  .row-name .status-dot {
+    position: absolute;
+    left: 0;
   }
 
   .row-setting {
@@ -370,7 +379,7 @@
     font-size: 0.8rem;
     font-family: monospace;
     color: var(--text-muted);
-    flex: 1;
+    width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

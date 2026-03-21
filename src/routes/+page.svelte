@@ -356,11 +356,11 @@
     margin-bottom: 0.5rem;
   }
 
-  .col-name { min-width: 120px; }
-  .col-proxy { flex: 1; }
+  .col-name { flex: 1; padding-left: 14px; }
+  .col-proxy { width: 200px; }
   .col-setting { width: 80px; text-align: center; }
   .col-date { width: 100px; text-align: left; }
-  .col-actions { width: 170px; text-align: right; }
+  .col-actions { width: 200px; text-align: right; }
 
   .sort-btn {
     background: none;
