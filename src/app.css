@@ -5,6 +5,9 @@
   --text-main: #ffffff;
   --text-muted: #888888;
   --text-inverse: #000000;
+  --accent-running: #00ff41;
+  --accent-warning: #ff8800;
+  --accent-danger: #ff4444;
 }
 
 * {

@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::camoufox::get_app_dir;
+use crate::process_manager;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct FingerprintConfig {
@@ -452,7 +453,12 @@ pub async fn delete_instance(app: &AppHandle, id: String) -> Result<(), String> 
     Ok(())
 }
 
-pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> {
+pub async fn launch_instance(app: &AppHandle, id: String) -> Result<u32, String> {
+    // Check if already running
+    if process_manager::is_running(&id) {
+        return Err("Instance is already running".to_string());
+    }
+
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
 
@@ -497,14 +503,63 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<(), String> 
     };
 
     // Spawn detached process with CAMOU_CONFIG env var
-    std::process::Command::new(bin_path)
+    let mut child = std::process::Command::new(bin_path)
         .arg("--profile")
         .arg(&instance_dir)
         .env("CAMOU_CONFIG", &camou_config_json)
         .spawn()
         .map_err(|e| format!("Failed to launch instance: {}", e))?;
 
-    Ok(())
+    let pid = child.id();
+
+    // Register in process manager
+    process_manager::register(&id, pid);
+
+    // Spawn a lightweight async task to track the real browser process.
+    //
+    // On Windows, camoufox uses Firefox's launcher-process pattern:
+    //   1. The spawned child (stub) exits quickly after launching the real browser.
+    //   2. We wait for the stub to exit, then scan for the real browser PID by
+    //      matching --profile <instance_dir> in process command-line arguments.
+    //   3. We update the registry with the real PID and poll until it exits.
+    //   4. We emit `instance-stopped` so the frontend can update its state.
+    let app_handle = app.clone();
+    let instance_id = id.clone();
+    let profile_dir = instance_dir.clone();
+    tokio::spawn(async move {
+        // Step 1: reap the stub on the blocking pool — returns quickly.
+        let _ = tokio::task::spawn_blocking(move || child.wait()).await;
+
+        // Step 2: give the real browser a moment to start, then find its PID.
+        // Retry a few times since Firefox may still be initialising.
+        let mut real_pid: Option<u32> = None;
+        for _ in 0..10 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if let Some(found) = process_manager::find_browser_pid(&profile_dir) {
+                real_pid = Some(found);
+                break;
+            }
+        }
+
+        if let Some(browser_pid) = real_pid {
+            // Step 3: update registry with the real browser PID and poll until it exits.
+            process_manager::update_pid(&instance_id, browser_pid);
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if !process_manager::is_pid_alive(browser_pid) {
+                    break;
+                }
+            }
+        }
+        // If we never found the real PID the browser either never started or
+        // exited before we could find it — either way fall through to cleanup.
+
+        // Step 4: clean up and notify frontend.
+        process_manager::unregister(&instance_id);
+        let _ = app_handle.emit("instance-stopped", &instance_id);
+    });
+
+    Ok(pid)
 }
 
 pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> Result<(), String> {

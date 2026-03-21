@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { deleteInstance, launchInstance, isLaunching, togglePersistence, settings, updateSettings } from '$lib/store';
+  import { deleteInstance, launchInstance, stopInstance, isLaunching, runningInstances, togglePersistence, settings, updateSettings } from '$lib/store';
   import type { InstanceConfig } from '$lib/store';
   import { get } from 'svelte/store';
   import WipeDataModal from '$lib/components/instance/WipeDataModal.svelte';
@@ -10,6 +10,9 @@
 
   let showConfirm = false;
   let showSettings = false;
+
+  $: isRunning = $runningInstances.has(instance.id);
+  $: isCurrentlyLaunching = $isLaunching === instance.id;
 
   function handlePersistenceToggle(e: Event) {
     const target = e.currentTarget as HTMLInputElement;
@@ -44,11 +47,40 @@
   function formatDate(timestamp: number) {
     return new Date(timestamp * 1000).toLocaleDateString();
   }
+
+  async function handleLaunch() {
+    try {
+      await launchInstance(instance.id);
+    } catch (e) {
+      // Error already logged in store
+    }
+  }
+
+  async function handleStop() {
+    try {
+      await stopInstance(instance.id);
+    } catch (e) {
+      // Error already logged in store
+    }
+  }
+
+  async function handleDelete() {
+    try {
+      await deleteInstance(instance.id);
+    } catch (e) {
+      // Error already logged in store
+    }
+  }
 </script>
 
 {#if compact}
-<div class="instance-row bento-panel">
-  <span class="row-name">{instance.name.toUpperCase()}</span>
+<div class="instance-row bento-panel" class:instance-running={isRunning}>
+  <span class="row-name">
+    {instance.name.toUpperCase()}
+    {#if isRunning}
+      <span class="running-badge">RUNNING</span>
+    {/if}
+  </span>
   <span class="row-proxy">{instance.proxy || 'NONE'}</span>
   <div class="row-setting">
     <label class="switch">
@@ -65,26 +97,42 @@
     <button class="icon-btn" aria-label="Settings" on:click={() => showSettings = true}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
+    {#if isRunning}
+      <button class="btn btn-stop btn-sm" on:click={handleStop}>
+        STOP
+      </button>
+    {:else}
+      <button 
+        class="btn btn-primary btn-sm" 
+        disabled={isCurrentlyLaunching}
+        on:click={handleLaunch}
+      >
+        {#if isCurrentlyLaunching}
+          <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
+        {:else}
+          LAUNCH
+        {/if}
+      </button>
+    {/if}
     <button 
-      class="btn btn-primary btn-sm" 
-      disabled={$isLaunching === instance.id}
-      on:click={() => launchInstance(instance.id)}
+      class="btn btn-danger btn-sm" 
+      disabled={isRunning}
+      title={isRunning ? 'Stop the instance before deleting' : ''}
+      on:click={handleDelete}
     >
-      {#if $isLaunching === instance.id}
-        <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
-      {:else}
-        LAUNCH
-      {/if}
-    </button>
-    <button class="btn btn-danger btn-sm" on:click={() => deleteInstance(instance.id)}>
       DELETE
     </button>
   </div>
 </div>
 {:else}
-<div class="instance-card bento-panel">
+<div class="instance-card bento-panel" class:instance-running={isRunning}>
   <div class="card-header">
-    <h3>{instance.name.toUpperCase()}</h3>
+    <div class="card-title-group">
+      <h3>{instance.name.toUpperCase()}</h3>
+      {#if isRunning}
+        <span class="running-badge">RUNNING</span>
+      {/if}
+    </div>
     <span class="date">{formatDate(instance.created_at)}</span>
   </div>
   
@@ -113,19 +161,30 @@
     <button class="icon-btn" aria-label="Settings" on:click={() => showSettings = true}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
+    {#if isRunning}
+      <button class="btn btn-stop" on:click={handleStop}>
+        STOP
+      </button>
+    {:else}
+      <button 
+        class="btn btn-primary" 
+        disabled={isCurrentlyLaunching}
+        on:click={handleLaunch}
+      >
+        {#if isCurrentlyLaunching}
+          <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
+          LAUNCHING
+        {:else}
+          LAUNCH
+        {/if}
+      </button>
+    {/if}
     <button 
-      class="btn btn-primary" 
-      disabled={$isLaunching === instance.id}
-      on:click={() => launchInstance(instance.id)}
+      class="btn btn-danger" 
+      disabled={isRunning}
+      title={isRunning ? 'Stop the instance before deleting' : ''}
+      on:click={handleDelete}
     >
-      {#if $isLaunching === instance.id}
-        <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
-        LAUNCHING
-      {:else}
-        LAUNCH
-      {/if}
-    </button>
-    <button class="btn btn-danger" on:click={() => deleteInstance(instance.id)}>
       DELETE
     </button>
   </div>
@@ -163,6 +222,17 @@
     border-color: var(--text-muted);
   }
 
+  .instance-card.instance-running,
+  .instance-row.instance-running {
+    border-color: var(--accent-running);
+  }
+
+  .instance-card.instance-running:hover,
+  .instance-row.instance-running:hover {
+    border-color: var(--accent-running);
+    box-shadow: 0 0 0 1px var(--accent-running);
+  }
+
   .card-header {
     display: flex;
     justify-content: space-between;
@@ -171,11 +241,32 @@
     padding-bottom: 1rem;
   }
 
+  .card-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
   .card-header h3 {
     margin: 0;
     font-size: 1rem;
     font-weight: 400;
     letter-spacing: 0.1em;
+  }
+
+  .running-badge {
+    font-size: 0.55rem;
+    letter-spacing: 0.1em;
+    border: 1px solid var(--accent-running);
+    color: var(--accent-running);
+    padding: 0.15rem 0.4rem;
+    font-weight: 400;
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
 
   .date {
@@ -259,6 +350,9 @@
     font-weight: 400;
     letter-spacing: 0.1em;
     min-width: 120px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .row-setting {
@@ -290,7 +384,7 @@
   .row-actions {
     display: flex;
     gap: 0.5rem;
-    width: 170px;
+    width: 200px;
     justify-content: flex-end;
     align-items: center;
   }
@@ -298,6 +392,17 @@
   .btn-sm {
     padding: 0.3rem 0.75rem;
     font-size: 0.7rem;
+  }
+
+  .btn-stop {
+    background: transparent;
+    border: 1px solid var(--accent-warning);
+    color: var(--accent-warning);
+  }
+
+  .btn-stop:hover {
+    background: var(--accent-warning);
+    color: var(--text-inverse);
   }
 
   .icon-btn {

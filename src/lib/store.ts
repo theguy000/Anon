@@ -147,12 +147,59 @@ export interface Preset {
   speechVoices: string[] | null;
 }
 
+export interface RunningInstance {
+  id: string;
+  pid: number;
+}
+
 export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
 export const instances = writable<InstanceConfig[]>([]);
 export const fingerprintPresets = writable<Record<string, Preset[]>>({});
 export const isLaunching = writable<string | null>(null);
 export const settings = writable<{ skip_wipe_confirmation: boolean }>({ skip_wipe_confirmation: false });
+
+// ── Running instances tracking ──────────────────────────────────────────
+export const runningInstances = writable<Set<string>>(new Set());
+export const showCloseConfirm = writable<boolean>(false);
+
+/** Initialize event listeners for process lifecycle events. Call once on app mount.
+ *  Returns a cleanup function that removes all listeners — pass it to onMount's
+ *  return value so listeners are not duplicated if the layout ever remounts.
+ */
+export async function initProcessListeners(): Promise<() => void> {
+  // When backend detects a process has exited
+  const unlistenStopped = await listen<string>('instance-stopped', (event) => {
+    runningInstances.update(set => {
+      const next = new Set(set);
+      next.delete(event.payload);
+      return next;
+    });
+  });
+
+  // When the user tries to close the window with running instances
+  const unlistenClose = await listen<void>('close-requested', () => {
+    showCloseConfirm.set(true);
+  });
+
+  // Load initial state of running instances from backend
+  await refreshRunningInstances();
+
+  return () => {
+    unlistenStopped();
+    unlistenClose();
+  };
+}
+
+/** Fetch current running instances from the backend and sync the store. */
+export async function refreshRunningInstances() {
+  try {
+    const running = await invoke<RunningInstance[]>('get_running_instances');
+    runningInstances.set(new Set(running.map(r => r.id)));
+  } catch (e) {
+    console.error('Failed to get running instances', e);
+  }
+}
 
 // Derived store: extracts unique dropdown values from all fingerprint presets
 export const presetDerivedOptions = derived(fingerprintPresets, ($presets) => {
@@ -303,17 +350,51 @@ export async function deleteInstance(id: string) {
     await loadInstances();
   } catch (e) {
     console.error('Failed to delete instance', e);
+    throw e;
   }
 }
 
 export async function launchInstance(id: string) {
   isLaunching.set(id);
   try {
-    await invoke('launch_instance', { id });
+    const pid = await invoke<number>('launch_instance', { id });
+    // Mark this instance as running immediately
+    runningInstances.update(set => {
+      const next = new Set(set);
+      next.add(id);
+      return next;
+    });
+    return pid;
   } catch (e) {
     console.error('Failed to launch instance', e);
+    throw e;
   } finally {
     isLaunching.set(null);
+  }
+}
+
+export async function stopInstance(id: string) {
+  try {
+    await invoke('stop_instance', { id });
+    // The backend watcher will emit 'instance-stopped' which updates the store,
+    // but we can also optimistically remove it now for faster UI feedback
+    runningInstances.update(set => {
+      const next = new Set(set);
+      next.delete(id);
+      return next;
+    });
+  } catch (e) {
+    console.error('Failed to stop instance', e);
+    throw e;
+  }
+}
+
+export async function confirmCloseAction(action: 'stop_all' | 'force_close' | 'cancel') {
+  showCloseConfirm.set(false);
+  try {
+    await invoke('confirm_close_action', { action });
+  } catch (e) {
+    console.error('Failed to confirm close action', e);
   }
 }
 

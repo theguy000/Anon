@@ -3,7 +3,10 @@ mod camoufox;
 mod fingerprint_presets;
 mod fingerprint_validator;
 mod instances;
+mod process_manager;
 mod settings;
+
+use tauri::Emitter;
 
 #[tauri::command]
 async fn check_camoufox(app: tauri::AppHandle) -> Result<bool, String> {
@@ -54,11 +57,15 @@ async fn update_settings(
 
 #[tauri::command]
 async fn delete_instance(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    // Prevent deleting a running instance
+    if process_manager::is_running(&id) {
+        return Err("Cannot delete a running instance. Stop it first.".to_string());
+    }
     instances::delete_instance(&app, id).await
 }
 
 #[tauri::command]
-async fn launch_instance(app: tauri::AppHandle, id: String) -> Result<(), String> {
+async fn launch_instance(app: tauri::AppHandle, id: String) -> Result<u32, String> {
     instances::launch_instance(&app, id).await
 }
 
@@ -77,6 +84,53 @@ async fn get_fingerprint_presets(
     fingerprint_presets::get_presets().clone()
 }
 
+// ── New process management commands ──────────────────────────────────────
+
+#[tauri::command]
+async fn get_running_instances() -> Vec<process_manager::RunningInstance> {
+    process_manager::get_running_instances()
+}
+
+#[tauri::command]
+async fn is_instance_running(id: String) -> bool {
+    process_manager::is_running(&id)
+}
+
+#[tauri::command]
+async fn stop_instance(id: String) -> Result<(), String> {
+    process_manager::stop_instance(&id)
+}
+
+/// Called by the frontend when the user picks an action from the exit
+/// confirmation dialog.  
+/// `action` is one of: `"stop_all"`, `"force_close"`, `"cancel"`.
+#[tauri::command]
+async fn confirm_close_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    match action.as_str() {
+        "stop_all" => {
+            // Kill every running instance, then quit
+            let running = process_manager::get_running_instances();
+            for inst in &running {
+                let _ = process_manager::stop_instance(&inst.id);
+            }
+            // Give processes a moment to exit
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            app.exit(0);
+            Ok(())
+        }
+        "force_close" => {
+            // Quit immediately without stopping instances
+            app.exit(0);
+            Ok(())
+        }
+        "cancel" => {
+            // Do nothing — the user cancelled the close
+            Ok(())
+        }
+        _ => Err(format!("Unknown action: {}", action)),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -92,8 +146,21 @@ pub fn run() {
             get_settings,
             update_settings,
             update_instance_settings,
-            get_fingerprint_presets
+            get_fingerprint_presets,
+            get_running_instances,
+            is_instance_running,
+            stop_instance,
+            confirm_close_action
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // If there are running instances, prevent close and ask the user
+                if process_manager::has_running_instances() {
+                    api.prevent_close();
+                    let _ = window.emit("close-requested", ());
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
