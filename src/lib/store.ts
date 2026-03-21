@@ -241,6 +241,16 @@ export async function loadFingerprintPresets() {
 }
 
 export async function startDownload() {
+  // Check if already installed before starting download
+  const isDownloaded = await invoke<boolean>('check_camoufox');
+  if (isDownloaded) {
+    camoufoxDownloaded.set(true);
+    await loadInstances();
+    await loadSettings();
+    await loadFingerprintPresets();
+    return;
+  }
+
   installProgress.set({ status: 'Starting download...', progress: 0 });
   const unlisten = await listen<{ status: string; progress: number }>('install_progress', (event) => {
     installProgress.set(event.payload);

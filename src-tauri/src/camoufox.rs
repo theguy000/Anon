@@ -43,6 +43,11 @@ pub async fn get_camoufox_binary(app: &AppHandle) -> Option<PathBuf> {
 }
 
 pub async fn download_and_extract(app: &AppHandle) -> Result<(), String> {
+    // Prevent re-download if already installed
+    if get_camoufox_binary(app).await.is_some() {
+        return Err("Camoufox is already installed".to_string());
+    }
+
     let app_dir = get_app_dir(app).await;
     let url = get_latest_release_url().await.map_err(|e| e.to_string())?;
 
