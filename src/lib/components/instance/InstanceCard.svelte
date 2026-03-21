@@ -2,13 +2,14 @@
   import { deleteInstance, launchInstance, stopInstance, isLaunching, runningInstances, togglePersistence, settings, updateSettings } from '$lib/store';
   import type { InstanceConfig } from '$lib/store';
   import { get } from 'svelte/store';
-  import WipeDataModal from '$lib/components/instance/WipeDataModal.svelte';
+  import ConfirmationModal from '$lib/components/instance/ConfirmationModal.svelte';
   import InstanceSettingsModal from '$lib/components/instance/InstanceSettingsModal.svelte';
 
   export let instance: InstanceConfig;
   export let compact = false;
 
   let showConfirm = false;
+  let showDeleteConfirm = false;
   let showSettings = false;
 
   $: isRunning = $runningInstances.has(instance.id);
@@ -65,11 +66,32 @@
   }
 
   async function handleDelete() {
+    const s = get(settings);
+    if (s.skip_delete_confirmation) {
+      try {
+        await deleteInstance(instance.id);
+      } catch (err) {
+        // Error already logged in store
+      }
+    } else {
+      showDeleteConfirm = true;
+    }
+  }
+
+  async function confirmDelete(event: CustomEvent) {
+    if (event.detail?.dontShowAgain) {
+      updateSettings({ skip_delete_confirmation: true });
+    }
     try {
       await deleteInstance(instance.id);
-    } catch (e) {
+    } catch (err) {
       // Error already logged in store
     }
+    showDeleteConfirm = false;
+  }
+
+  function cancelDelete() {
+    showDeleteConfirm = false;
   }
 </script>
 
@@ -187,7 +209,7 @@
 </div>
 {/if}
 
-<WipeDataModal 
+<ConfirmationModal 
   show={showConfirm}
   title="WIPE DATA?"
   message="TURNING OFF DATA RETENTION WILL PERMANENTLY DELETE ALL HISTORY, LOGINS, AND COOKIES FOR THIS INSTANCE."
@@ -196,6 +218,17 @@
   showSkipToggle={true}
   on:confirm={confirmDisable}
   on:cancel={cancelDisable}
+/>
+
+<ConfirmationModal 
+  show={showDeleteConfirm}
+  title="DELETE INSTANCE?"
+  message="THIS WILL PERMANENTLY DELETE THIS INSTANCE AND ALL ITS DATA. THIS ACTION CANNOT BE UNDONE."
+  confirmText="DELETE"
+  danger={true}
+  showSkipToggle={true}
+  on:confirm={confirmDelete}
+  on:cancel={cancelDelete}
 />
 
 <InstanceSettingsModal

@@ -152,12 +152,17 @@ export interface RunningInstance {
   pid: number;
 }
 
+export interface AppSettings {
+  skip_wipe_confirmation: boolean;
+  skip_delete_confirmation: boolean;
+}
+
 export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
 export const instances = writable<InstanceConfig[]>([]);
 export const fingerprintPresets = writable<Record<string, Preset[]>>({});
 export const isLaunching = writable<string | null>(null);
-export const settings = writable<{ skip_wipe_confirmation: boolean }>({ skip_wipe_confirmation: false });
+export const settings = writable<AppSettings>({ skip_wipe_confirmation: false, skip_delete_confirmation: false });
 
 // ── Running instances tracking ──────────────────────────────────────────
 export const runningInstances = writable<Set<string>>(new Set());
@@ -400,17 +405,17 @@ export async function confirmCloseAction(action: 'stop_all' | 'force_close' | 'c
 
 export async function loadSettings() {
   try {
-    const s = await invoke<any>('get_settings');
+    const s = await invoke<AppSettings>('get_settings');
     settings.set(s);
   } catch (e) {
     console.error('Failed to load settings', e);
   }
 }
 
-export async function updateSettings(newSettings: any) {
+export async function updateSettings(newSettings: Partial<AppSettings>) {
   try {
     await invoke('update_settings', { settings: newSettings });
-    settings.set(newSettings);
+    settings.set(newSettings as AppSettings);
   } catch (e) {
     console.error('Failed to update settings', e);
   }

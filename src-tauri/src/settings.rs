@@ -7,6 +7,7 @@ use tauri::AppHandle;
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     pub skip_wipe_confirmation: bool,
+    pub skip_delete_confirmation: bool,
 }
 
 pub async fn get_settings_path(app: &AppHandle) -> PathBuf {
