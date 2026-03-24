@@ -301,6 +301,15 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
     serde_json::Value::Object(m)
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ProxyConfig {
+    pub proxy_type: Option<String>,   // "http", "socks4", "socks5", or null/none
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InstanceConfig {
     pub id: String,
@@ -310,6 +319,8 @@ pub struct InstanceConfig {
     pub created_at: i64,
     #[serde(default)]
     pub fingerprint: Option<FingerprintConfig>,
+    #[serde(default)]
+    pub proxy_config: Option<ProxyConfig>,
 }
 
 pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
@@ -324,6 +335,7 @@ pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
 fn ensure_user_js(
     instance_dir: &Path,
     proxy: &Option<String>,
+    proxy_config: &Option<ProxyConfig>,
     persist_data: bool,
 ) -> io::Result<()> {
     let user_js_path = instance_dir.join("user.js");
@@ -351,8 +363,57 @@ fn ensure_user_js(
         user_js_content.push_str("user_pref(\"browser.sessionstore.resume_from_crash\", false);\n");
     }
 
-    // Proxy settings
-    if proxy.is_some() {
+    // Proxy settings — prefer structured proxy_config, fall back to legacy proxy string
+    if let Some(pc) = proxy_config {
+        if let Some(ref ptype) = pc.proxy_type {
+            let host = pc.host.as_deref().unwrap_or("");
+            let port = pc.port.unwrap_or(0);
+
+            if !host.is_empty() && port > 0 {
+                // Enable manual proxy configuration
+                user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
+
+                match ptype.as_str() {
+                    "http" => {
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.http\", \"{}\");\n", host
+                        ));
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.http_port\", {});\n", port
+                        ));
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.ssl\", \"{}\");\n", host
+                        ));
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.ssl_port\", {});\n", port
+                        ));
+                    }
+                    "socks4" => {
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.socks\", \"{}\");\n", host
+                        ));
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.socks_port\", {});\n", port
+                        ));
+                        user_js_content.push_str("user_pref(\"network.proxy.socks_version\", 4);\n");
+                        user_js_content.push_str("user_pref(\"network.proxy.socks_remote_dns\", false);\n");
+                    }
+                    "socks5" => {
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.socks\", \"{}\");\n", host
+                        ));
+                        user_js_content.push_str(&format!(
+                            "user_pref(\"network.proxy.socks_port\", {});\n", port
+                        ));
+                        user_js_content.push_str("user_pref(\"network.proxy.socks_version\", 5);\n");
+                        user_js_content.push_str("user_pref(\"network.proxy.socks_remote_dns\", true);\n");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    } else if proxy.is_some() {
+        // Legacy fallback: old proxy string
         user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
     }
 
@@ -430,6 +491,7 @@ pub async fn create_instance(
             .unwrap()
             .as_secs() as i64,
         fingerprint: None,
+        proxy_config: None,
     };
 
     // Save anon config
@@ -438,7 +500,7 @@ pub async fn create_instance(
     fs::write(config_path, config_json).map_err(|e| e.to_string())?;
 
     // Generate user.js for persistence and proxy settings
-    let _ = ensure_user_js(&instance_dir, &config.proxy, config.persist_data);
+    let _ = ensure_user_js(&instance_dir, &config.proxy, &config.proxy_config, config.persist_data);
 
     Ok(config)
 }
@@ -477,10 +539,11 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<u32, String>
     };
 
     let proxy = config.as_ref().and_then(|c| c.proxy.clone());
+    let proxy_config = config.as_ref().and_then(|c| c.proxy_config.clone());
     let persist_data = config.as_ref().is_none_or(|c| c.persist_data);
 
     // Update user.js on every launch to ensure preferences are applied
-    let _ = ensure_user_js(&instance_dir, &proxy, persist_data);
+    let _ = ensure_user_js(&instance_dir, &proxy, &proxy_config, persist_data);
 
     let bin_path = crate::camoufox::get_camoufox_binary(app)
         .await
@@ -578,7 +641,7 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
 
             // Immediately update user.js
-            let _ = ensure_user_js(&instance_dir, &config.proxy, config.persist_data);
+            let _ = ensure_user_js(&instance_dir, &config.proxy, &config.proxy_config, config.persist_data);
 
             // If disabling, clean up data
             if !enabled {
@@ -623,4 +686,53 @@ pub async fn update_instance_settings(
     }
 
     Err("Failed to update instance settings".to_string())
+}
+
+pub async fn update_instance_proxy(
+    app: &AppHandle,
+    id: String,
+    proxy_config: Option<ProxyConfig>,
+) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(&id);
+
+    if !instance_dir.exists() {
+        return Err("Instance profile not found".to_string());
+    }
+
+    let config_path = instance_dir.join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.proxy_config = proxy_config.clone();
+
+            // Also update the legacy proxy field for display purposes
+            config.proxy = proxy_config.as_ref().and_then(|pc| {
+                let ptype = pc.proxy_type.as_deref()?;
+                let host = pc.host.as_deref()?;
+                let port = pc.port?;
+                if host.is_empty() || port == 0 {
+                    return None;
+                }
+                match (pc.username.as_deref(), pc.password.as_deref()) {
+                    (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
+                        Some(format!("{}://{}:{}@{}:{}", ptype, user, pass, host, port))
+                    }
+                    (Some(user), _) if !user.is_empty() => {
+                        Some(format!("{}://{}@{}:{}", ptype, user, host, port))
+                    }
+                    _ => Some(format!("{}://{}:{}", ptype, host, port)),
+                }
+            });
+
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+
+            // Regenerate user.js with updated proxy settings
+            let _ = ensure_user_js(&instance_dir, &config.proxy, &config.proxy_config, config.persist_data);
+
+            return Ok(());
+        }
+    }
+
+    Err("Failed to update instance proxy settings".to_string())
 }

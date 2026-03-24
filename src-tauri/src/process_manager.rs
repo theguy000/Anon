@@ -248,7 +248,8 @@ pub fn is_pid_alive(pid: u32) -> bool {
     let mut sys = get_system().lock().unwrap();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[sysinfo_pid]),
-        true, // remove from cache if dead so subsequent checks are accurate
+        // remove from cache if dead so subsequent checks are accurate
+        true,
         minimal_refresh_kind(),
     );
     sys.process(sysinfo_pid).is_some()
@@ -289,6 +290,19 @@ pub fn find_browser_pid(profile_dir: &std::path::Path) -> Option<u32> {
             .unwrap_or("")
             .to_lowercase();
 
+        // Log every camoufox/firefox process found for diagnosis
+        if exe_name.contains("camoufox") || exe_name.contains("firefox") {
+            let cmd_str: Vec<String> = process
+                .cmd()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            eprintln!(
+                "[find_browser_pid] candidate exe={} cmd={:?}",
+                exe_name, cmd_str
+            );
+        }
+
         if !exe_name.contains("camoufox") && !exe_name.contains("firefox") {
             continue;
         }
@@ -301,6 +315,10 @@ pub fn find_browser_pid(profile_dir: &std::path::Path) -> Option<u32> {
             if arg_lower == "--profile" {
                 if let Some(next) = cmd.get(i + 1) {
                     let next_lower = next.to_string_lossy().to_lowercase().replace('/', "\\");
+                    eprintln!(
+                        "[find_browser_pid] --profile arg: got={:?} want={:?}",
+                        next_lower, profile_str
+                    );
                     if next_lower == profile_str {
                         return Some(process.pid().as_u32());
                     }

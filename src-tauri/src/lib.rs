@@ -79,6 +79,15 @@ async fn update_instance_settings(
 }
 
 #[tauri::command]
+async fn update_instance_proxy(
+    app: tauri::AppHandle,
+    id: String,
+    proxy_config: Option<instances::ProxyConfig>,
+) -> Result<(), String> {
+    instances::update_instance_proxy(&app, id, proxy_config).await
+}
+
+#[tauri::command]
 async fn get_fingerprint_presets(
 ) -> std::collections::HashMap<String, Vec<fingerprint_presets::Preset>> {
     fingerprint_presets::get_presets().clone()
@@ -146,6 +155,7 @@ pub fn run() {
             get_settings,
             update_settings,
             update_instance_settings,
+            update_instance_proxy,
             get_fingerprint_presets,
             get_running_instances,
             is_instance_running,

@@ -110,6 +110,14 @@ export interface FingerprintConfig {
   auto_change_window_size?: boolean | null;
 }
 
+export interface ProxyConfig {
+  proxy_type?: string | null;   // "http" | "socks4" | "socks5" | null
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
+  password?: string | null;
+}
+
 export interface InstanceConfig {
   id: string;
   name: string;
@@ -117,6 +125,7 @@ export interface InstanceConfig {
   persist_data: boolean;
   created_at: number;
   fingerprint?: FingerprintConfig | null;
+  proxy_config?: ProxyConfig | null;
 }
 
 export interface PresetNavigator {
@@ -432,6 +441,16 @@ export async function updateInstanceSettings(id: string, fingerprint: Fingerprin
     return conflicts ?? [];
   } catch (e) {
     console.error('Failed to update instance settings', e);
+    throw e;
+  }
+}
+
+export async function updateInstanceProxy(id: string, proxyConfig: ProxyConfig | null): Promise<void> {
+  try {
+    await invoke('update_instance_proxy', { id, proxyConfig });
+    await loadInstances();
+  } catch (e) {
+    console.error('Failed to update instance proxy', e);
     throw e;
   }
 }

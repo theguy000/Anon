@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
-  import { updateInstanceSettings } from "$lib/store";
-  import type { FingerprintConfig, InstanceConfig, FingerprintConflict } from "$lib/store";
+  import { updateInstanceSettings, updateInstanceProxy } from "$lib/store";
+  import type { FingerprintConfig, InstanceConfig, FingerprintConflict, ProxyConfig } from "$lib/store";
 
   // Sections
   import NavigatorSection from "./settings/NavigatorSection.svelte";
@@ -20,6 +20,7 @@
   import MediaDevicesSection from "./settings/MediaDevicesSection.svelte";
   import BehaviorSection from "./settings/BehaviorSection.svelte";
   import AdvancedSection from "./settings/AdvancedSection.svelte";
+  import ProxySection from "./settings/ProxySection.svelte";
   import { WINDOW_PRESETS } from "./settings/constants";
   import { fingerprintPresets } from "$lib/store";
   import type { Preset } from "$lib/store";
@@ -32,7 +33,11 @@
   export let show = false;
   export let instance: InstanceConfig;
 
+  // Tab state
+  let activeTab: 'fingerprint' | 'proxy' = 'fingerprint';
+
   let fp: FingerprintConfig = {};
+  let proxyConfig: ProxyConfig = {};
   let saving = false;
   let conflicts: FingerprintConflict[] = [];
   let sections: Record<string, boolean> = {};
@@ -58,7 +63,9 @@
   // or any `fp = ...` assignment will trigger re-initialization and reset values.
   $: if (show && instance) {
     fp = instance.fingerprint ? { ...instance.fingerprint } : {};
+    proxyConfig = instance.proxy_config ? { ...instance.proxy_config } : {};
     saving = false;
+    activeTab = 'fingerprint';
     selectedScreenPreset = "";
     selectedWebglPreset = "";
     selectedLocale = "";
@@ -126,33 +133,41 @@
     saving = true;
     conflicts = [];
     try {
-      // Persist the global preset selection
-      fp.global_category = globalCategory || null;
-      fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
-      // Persist AUTO mode settings
-      fp.auto_fingerprint = autoMode || null;
-      fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
-      if (autoMode) {
-        const preset = !autoChangeWindowSize && autoWindowPresetIndex >= 0 ? WINDOW_PRESETS[autoWindowPresetIndex] : null;
-        if (preset) {
-          fp.outer_width = preset.w;
-          fp.outer_height = preset.h;
-        } else {
-          fp.outer_width = null;
-          fp.outer_height = null;
-        }
-        fp.inner_width = null;
-        fp.inner_height = null;
-      }
-      const warnings = await updateInstanceSettings(instance.id, fp);
-      if (warnings.length > 0) {
-        conflicts = warnings;
-        sections["webgl"] = true;
-        requestAnimationFrame(() => {
-          conflictsBanner?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      } else {
+      if (activeTab === 'proxy') {
+        // Save proxy settings
+        const hasProxy = proxyConfig.proxy_type && proxyConfig.host && proxyConfig.port;
+        await updateInstanceProxy(instance.id, hasProxy ? proxyConfig : null);
         dispatch("close");
+      } else {
+        // Save fingerprint settings
+        // Persist the global preset selection
+        fp.global_category = globalCategory || null;
+        fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
+        // Persist AUTO mode settings
+        fp.auto_fingerprint = autoMode || null;
+        fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
+        if (autoMode) {
+          const preset = !autoChangeWindowSize && autoWindowPresetIndex >= 0 ? WINDOW_PRESETS[autoWindowPresetIndex] : null;
+          if (preset) {
+            fp.outer_width = preset.w;
+            fp.outer_height = preset.h;
+          } else {
+            fp.outer_width = null;
+            fp.outer_height = null;
+          }
+          fp.inner_width = null;
+          fp.inner_height = null;
+        }
+        const warnings = await updateInstanceSettings(instance.id, fp);
+        if (warnings.length > 0) {
+          conflicts = warnings;
+          sections["webgl"] = true;
+          requestAnimationFrame(() => {
+            conflictsBanner?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          });
+        } else {
+          dispatch("close");
+        }
       }
     } catch (e) {
       console.error(e);
@@ -161,16 +176,20 @@
     }
   }
   function handleReset() {
-    fp = {};
-    selectedScreenPreset = "";
-    selectedWebglPreset = "";
-    selectedLocale = "";
-    customWebgl = false;
-    globalCategory = "";
-    globalPresetIndex = -1;
-    autoMode = false;
-    autoChangeWindowSize = true;
-    autoWindowPresetIndex = -1;
+    if (activeTab === 'proxy') {
+      proxyConfig = {};
+    } else {
+      fp = {};
+      selectedScreenPreset = "";
+      selectedWebglPreset = "";
+      selectedLocale = "";
+      customWebgl = false;
+      globalCategory = "";
+      globalPresetIndex = -1;
+      autoMode = false;
+      autoChangeWindowSize = true;
+      autoWindowPresetIndex = -1;
+    }
   }
   function handleClose() {
     dispatch("close");
@@ -181,7 +200,7 @@
   <div class="settings-modal">
     <div class="settings-header">
       <div class="header-left">
-        <h3>FINGERPRINT SETTINGS</h3>
+        <h3>INSTANCE SETTINGS</h3>
         {#if instance}
           <div class="instance-name">
             <span class="instance-name-value">{instance.name.toUpperCase()}</span>
@@ -206,7 +225,33 @@
       </button>
     </div>
 
+    <div class="tab-bar">
+      <button
+        class="tab-item"
+        class:tab-active={activeTab === 'fingerprint'}
+        on:click={() => activeTab = 'fingerprint'}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 2a10 10 0 0 1 10 10 10 10 0 0 1-10 10A10 10 0 0 1 2 12 10 10 0 0 1 12 2z"/>
+          <path d="M12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6 6 6 0 0 1-6-6 6 6 0 0 1 6-6z"/>
+          <circle cx="12" cy="12" r="2"/>
+        </svg>
+        FINGERPRINT
+      </button>
+      <button
+        class="tab-item"
+        class:tab-active={activeTab === 'proxy'}
+        on:click={() => activeTab = 'proxy'}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        PROXY
+      </button>
+    </div>
+
     <div class="settings-body">
+      {#if activeTab === 'fingerprint'}
       <!-- AUTO MODE -->
       <div class="auto-mode-panel section-group" style="padding: 1rem; border: 1px solid {autoMode ? accentGreen : 'var(--panel-border)'}; background: {autoMode ? accentGreenBg : 'rgba(255, 255, 255, 0.02)'}; margin-bottom: 1rem; transition: border-color 0.2s, background 0.2s;">
         <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -313,6 +358,11 @@
       <MediaDevicesSection bind:fp bind:open={sections["media"]} />
       <BehaviorSection bind:fp bind:open={sections["behavior"]} />
       <AdvancedSection bind:fp bind:open={sections["advanced"]} />
+      {/if}
+      {/if}
+
+      {#if activeTab === 'proxy'}
+      <ProxySection bind:proxyConfig />
       {/if}
     </div>
 
