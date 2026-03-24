@@ -321,6 +321,22 @@ pub struct InstanceConfig {
     pub fingerprint: Option<FingerprintConfig>,
     #[serde(default)]
     pub proxy_config: Option<ProxyConfig>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub proxy_pool: Option<Vec<ProxyConfig>>,
+    #[serde(default)]
+    pub proxy_rotation_mode: Option<String>,
+    #[serde(default)]
+    pub proxy_rotation_index: Option<usize>,
+    #[serde(default)]
+    pub fingerprint_pool: Option<Vec<FingerprintConfig>>,
+    #[serde(default)]
+    pub fingerprint_rotation_mode: Option<String>,
+    #[serde(default)]
+    pub fingerprint_rotation_index: Option<usize>,
 }
 
 pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
@@ -504,6 +520,14 @@ pub async fn create_instance(
             .as_secs() as i64,
         fingerprint: None,
         proxy_config: None,
+        tags: None,
+        notes: None,
+        proxy_pool: None,
+        proxy_rotation_mode: None,
+        proxy_rotation_index: None,
+        fingerprint_pool: None,
+        fingerprint_rotation_mode: None,
+        fingerprint_rotation_index: None,
     };
 
     // Save anon config
@@ -532,7 +556,7 @@ pub async fn delete_instance(app: &AppHandle, id: String) -> Result<(), String> 
     Ok(())
 }
 
-pub async fn launch_instance(app: &AppHandle, id: String) -> Result<u32, String> {
+pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<String>) -> Result<u32, String> {
     // Check if already running
     if process_manager::is_running(&id) {
         return Err("Instance is already running".to_string());
@@ -559,15 +583,79 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<u32, String>
     let proxy_config = config.as_ref().and_then(|c| c.proxy_config.clone());
     let persist_data = config.as_ref().is_none_or(|c| c.persist_data);
 
+    // Proxy rotation
+    let effective_proxy;
+    let effective_proxy_config;
+    if let Some(ref pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
+        if !pool.is_empty() {
+            let mode = config.as_ref().and_then(|c| c.proxy_rotation_mode.as_deref()).unwrap_or("sequential");
+            let idx = if mode == "random" {
+                use rand::Rng;
+                rand::thread_rng().gen_range(0..pool.len())
+            } else {
+                let current = config.as_ref().and_then(|c| c.proxy_rotation_index).unwrap_or(0);
+                let idx = current % pool.len();
+                // Update index for next launch
+                if let Ok(contents) = fs::read_to_string(&config_path) {
+                    if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
+                        cfg.proxy_rotation_index = Some(idx + 1);
+                        let _ = fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
+                    }
+                }
+                idx
+            };
+            effective_proxy_config = Some(pool[idx].clone());
+            // Build legacy proxy string from pool entry
+            effective_proxy = effective_proxy_config.as_ref().and_then(|pc| {
+                let ptype = pc.proxy_type.as_deref()?;
+                let host = pc.host.as_deref()?;
+                let port = pc.port?;
+                Some(format!("{}://{}:{}", ptype, host, port))
+            });
+        } else {
+            effective_proxy = proxy.clone();
+            effective_proxy_config = proxy_config.clone();
+        }
+    } else {
+        effective_proxy = proxy.clone();
+        effective_proxy_config = proxy_config.clone();
+    }
+
     // Update user.js on every launch to ensure preferences are applied
-    let _ = ensure_user_js(&instance_dir, &proxy, &proxy_config, persist_data);
+    let _ = ensure_user_js(&instance_dir, &effective_proxy, &effective_proxy_config, persist_data);
 
     let bin_path = crate::camoufox::get_camoufox_binary(app)
         .await
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
+    // Fingerprint rotation
+    let effective_fp = if let Some(ref pool) = config.as_ref().and_then(|c| c.fingerprint_pool.as_ref()) {
+        if !pool.is_empty() {
+            let mode = config.as_ref().and_then(|c| c.fingerprint_rotation_mode.as_deref()).unwrap_or("sequential");
+            let idx = if mode == "random" {
+                use rand::Rng;
+                rand::thread_rng().gen_range(0..pool.len())
+            } else {
+                let current = config.as_ref().and_then(|c| c.fingerprint_rotation_index).unwrap_or(0);
+                let idx = current % pool.len();
+                if let Ok(contents) = fs::read_to_string(&config_path) {
+                    if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
+                        cfg.fingerprint_rotation_index = Some(idx + 1);
+                        let _ = fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
+                    }
+                }
+                idx
+            };
+            Some(&pool[idx])
+        } else {
+            config.as_ref().and_then(|c| c.fingerprint.as_ref())
+        }
+    } else {
+        config.as_ref().and_then(|c| c.fingerprint.as_ref())
+    };
+
     // Build the CAMOU_CONFIG JSON from fingerprint settings
-    let camou_config_json = if let Some(fp) = config.as_ref().and_then(|c| c.fingerprint.as_ref()) {
+    let camou_config_json = if let Some(fp) = effective_fp {
         if fp.auto_fingerprint == Some(true) {
             crate::auto_fingerprint::generate_auto_config(
                 fp.auto_change_window_size.unwrap_or(true),
@@ -583,11 +671,12 @@ pub async fn launch_instance(app: &AppHandle, id: String) -> Result<u32, String>
     };
 
     // Spawn detached process with CAMOU_CONFIG env var
-    let mut child = std::process::Command::new(bin_path)
-        .arg("--profile")
-        .arg(&instance_dir)
-        .env("CAMOU_CONFIG", &camou_config_json)
-        .spawn()
+    let mut cmd = std::process::Command::new(bin_path);
+    cmd.arg("--profile").arg(&instance_dir).env("CAMOU_CONFIG", &camou_config_json);
+    if let Some(ref url) = startup_url {
+        cmd.arg(url);
+    }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to launch instance: {}", e))?;
 
     let pid = child.id();
@@ -762,4 +851,178 @@ pub async fn update_instance_proxy(
     }
 
     Err("Failed to update instance proxy settings".to_string())
+}
+
+pub async fn rename_instance(app: &AppHandle, id: String, new_name: String) -> Result<(), String> {
+    let new_name = new_name.trim().to_string();
+    if new_name.is_empty() {
+        return Err("Instance name cannot be empty".to_string());
+    }
+    if process_manager::is_running(&id) {
+        return Err("Cannot rename a running instance".to_string());
+    }
+    let instances = list_instances(app).await?;
+    if instances.iter().any(|i| i.id != id && i.name.eq_ignore_ascii_case(&new_name)) {
+        return Err("An instance with this name already exists".to_string());
+    }
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(&id);
+    let config_path = instance_dir.join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.name = new_name;
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("Failed to rename instance".to_string())
+}
+
+pub async fn update_instance_tags(app: &AppHandle, id: String, tags: Vec<String>) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(&id);
+    let config_path = instance_dir.join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.tags = if tags.is_empty() { None } else { Some(tags) };
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("Failed to update instance tags".to_string())
+}
+
+pub async fn update_instance_notes(app: &AppHandle, id: String, notes: Option<String>) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(&id);
+    let config_path = instance_dir.join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.notes = notes.filter(|n| !n.trim().is_empty());
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("Failed to update instance notes".to_string())
+}
+
+pub async fn export_instance(app: &AppHandle, id: String) -> Result<String, String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let config_path = profiles_dir.join(&id).join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            return serde_json::to_string_pretty(&config).map_err(|e| e.to_string());
+        }
+    }
+    Err("Instance not found".to_string())
+}
+
+pub async fn export_all_instances(app: &AppHandle) -> Result<String, String> {
+    let instances = list_instances(app).await?;
+    let settings = crate::settings::load_settings(app).await;
+    let export = serde_json::json!({
+        "version": "1.0",
+        "instances": instances,
+        "settings": settings,
+    });
+    serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+}
+
+pub async fn import_instances(app: &AppHandle, json: String) -> Result<Vec<InstanceConfig>, String> {
+    let existing = list_instances(app).await?;
+    let profiles_dir = get_profiles_dir(app).await;
+
+    // Try parsing as array of instances or as export bundle
+    let configs_to_import: Vec<InstanceConfig> = if let Ok(bundle) = serde_json::from_str::<serde_json::Value>(&json) {
+        if let Some(arr) = bundle.get("instances").and_then(|v| v.as_array()) {
+            arr.iter()
+                .filter_map(|v| serde_json::from_value::<InstanceConfig>(v.clone()).ok())
+                .collect()
+        } else if let Ok(single) = serde_json::from_str::<InstanceConfig>(&json) {
+            vec![single]
+        } else if let Ok(arr) = serde_json::from_str::<Vec<InstanceConfig>>(&json) {
+            arr
+        } else {
+            return Err("Invalid import format".to_string());
+        }
+    } else {
+        return Err("Invalid JSON".to_string());
+    };
+
+    let mut imported = Vec::new();
+    for config in configs_to_import {
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let mut new_name = config.name.clone();
+
+        // Handle name conflicts
+        let mut counter = 0;
+        while existing.iter().any(|i| i.name.eq_ignore_ascii_case(&new_name))
+            || imported.iter().any(|i: &InstanceConfig| i.name.eq_ignore_ascii_case(&new_name)) {
+            counter += 1;
+            new_name = format!("{} (imported{})", config.name, if counter > 1 { format!(" {}", counter) } else { String::new() });
+        }
+
+        let new_config = InstanceConfig {
+            id: new_id.clone(),
+            name: new_name,
+            proxy: config.proxy,
+            persist_data: config.persist_data,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            fingerprint: config.fingerprint,
+            proxy_config: config.proxy_config,
+            tags: config.tags,
+            notes: config.notes,
+            proxy_pool: config.proxy_pool,
+            proxy_rotation_mode: config.proxy_rotation_mode,
+            proxy_rotation_index: None,
+            fingerprint_pool: config.fingerprint_pool,
+            fingerprint_rotation_mode: config.fingerprint_rotation_mode,
+            fingerprint_rotation_index: None,
+        };
+
+        let instance_dir = profiles_dir.join(&new_id);
+        fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
+        let config_path = instance_dir.join("anon_config.json");
+        let config_json = serde_json::to_string_pretty(&new_config).unwrap();
+        fs::write(config_path, config_json).map_err(|e| e.to_string())?;
+        let _ = ensure_user_js(&instance_dir, &new_config.proxy, &new_config.proxy_config, new_config.persist_data);
+        imported.push(new_config);
+    }
+    Ok(imported)
+}
+
+pub async fn update_proxy_pool(app: &AppHandle, id: String, pool: Vec<ProxyConfig>, mode: Option<String>) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let config_path = profiles_dir.join(&id).join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.proxy_pool = if pool.is_empty() { None } else { Some(pool) };
+            config.proxy_rotation_mode = mode;
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("Failed to update proxy pool".to_string())
+}
+
+pub async fn update_fingerprint_pool(app: &AppHandle, id: String, pool: Vec<FingerprintConfig>, mode: Option<String>) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let config_path = profiles_dir.join(&id).join("anon_config.json");
+    if let Ok(contents) = fs::read_to_string(&config_path) {
+        if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
+            config.fingerprint_pool = if pool.is_empty() { None } else { Some(pool) };
+            config.fingerprint_rotation_mode = mode;
+            let config_json = serde_json::to_string_pretty(&config).unwrap();
+            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("Failed to update fingerprint pool".to_string())
 }

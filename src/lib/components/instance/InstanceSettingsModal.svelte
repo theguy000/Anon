@@ -231,10 +231,8 @@
         class:tab-active={activeTab === 'fingerprint'}
         on:click={() => activeTab = 'fingerprint'}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 2a10 10 0 0 1 10 10 10 10 0 0 1-10 10A10 10 0 0 1 2 12 10 10 0 0 1 12 2z"/>
-          <path d="M12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6 6 6 0 0 1-6-6 6 6 0 0 1 6-6z"/>
-          <circle cx="12" cy="12" r="2"/>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7.864 4.243C9.05 3.457 10.471 3 12 3c4.142 0 7.5 3.358 7.5 7.5 0 2.919-.556 5.709-1.568 8.269M5.743 6.364C4.957 7.55 4.5 8.971 4.5 10.5c0 1.468-.421 2.837-1.15 3.993M5.339 18.052C7.148 16.056 8.25 13.407 8.25 10.5 8.25 8.429 9.929 6.75 12 6.75s3.75 1.679 3.75 3.75c0 .527-.021 1.049-.064 1.565M12 10.5c0 3.723-1.356 7.128-3.601 9.751M15.033 15.654c-.548 1.92-1.394 3.714-2.485 5.33"/>
         </svg>
         FINGERPRINT
       </button>
@@ -243,8 +241,8 @@
         class:tab-active={activeTab === 'proxy'}
         on:click={() => activeTab = 'proxy'}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
         </svg>
         PROXY
       </button>

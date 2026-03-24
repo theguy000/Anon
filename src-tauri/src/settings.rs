@@ -1,13 +1,36 @@
 use crate::camoufox::get_app_dir;
+use crate::instances::{ProxyConfig, FingerprintConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TagDefinition {
+    pub label: String,
+    pub color: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
+    #[serde(default)]
     pub skip_wipe_confirmation: bool,
+    #[serde(default)]
     pub skip_delete_confirmation: bool,
+    #[serde(default)]
+    pub default_view_mode: Option<String>,
+    #[serde(default)]
+    pub default_sort_field: Option<String>,
+    #[serde(default)]
+    pub default_sort_dir: Option<String>,
+    #[serde(default)]
+    pub default_proxy_template: Option<ProxyConfig>,
+    #[serde(default)]
+    pub default_fingerprint_template: Option<FingerprintConfig>,
+    #[serde(default)]
+    pub camoufox_path: Option<String>,
+    #[serde(default)]
+    pub tag_definitions: Option<Vec<TagDefinition>>,
 }
 
 pub async fn get_settings_path(app: &AppHandle) -> PathBuf {
