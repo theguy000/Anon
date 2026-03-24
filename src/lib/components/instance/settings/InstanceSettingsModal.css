@@ -389,3 +389,82 @@ select.input-field option {
   line-height: 1.4;
   letter-spacing: 0.03em;
 }
+
+/* ── Notes & Tags Section ──────────────────────────────────────────────── */
+.notes-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 0.5rem 0;
+}
+
+.notes-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.notes-field label {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.notes-textarea {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.72rem;
+  padding: 0.5rem 0.65rem;
+  resize: vertical;
+  min-height: 40px;
+  outline: none;
+  transition: border-color 0.2s;
+  line-height: 1.5;
+}
+
+.notes-textarea:focus {
+  border-color: var(--text-main);
+}
+
+.notes-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.4;
+  font-size: 0.65rem;
+}
+
+.tags-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.tags-field label {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.tags-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag-toggle {
+  font-size: 0.55rem;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid;
+  cursor: pointer;
+  font-family: inherit;
+  text-transform: uppercase;
+  transition: all 0.15s ease;
+}
+
+.tag-toggle:hover {
+  opacity: 0.8;
+}

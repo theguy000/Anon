@@ -6,10 +6,18 @@
     createInstance,
     camoufoxDownloaded, 
     installProgress,
-    instances 
+    instances,
+    runningInstances,
+    settings,
+    bulkLaunch,
+    bulkStop,
+    bulkDelete,
+    addToast
   } from '$lib/store';
+  import type { InstanceConfig } from '$lib/store';
   import { get } from 'svelte/store';
   import InstanceCard from '$lib/components/instance/InstanceCard.svelte';
+  import ConfirmationModal from '$lib/components/instance/ConfirmationModal.svelte';
   import Modal from '$lib/components/ui/Modal.svelte';
 
   let showCreateModal = false;
@@ -19,10 +27,23 @@
   let viewMode: 'grid' | 'list' = 'list';
   let nameError = '';
 
+  // Sort state
   type SortField = 'name' | 'created_at';
   type SortDir = 'asc' | 'desc';
   let sortField: SortField = (localStorage.getItem('sort_field') as SortField) ?? 'created_at';
   let sortDir: SortDir = (localStorage.getItem('sort_dir') as SortDir) ?? 'desc';
+
+  // Filter state
+  let searchQuery = '';
+  let statusFilter: 'all' | 'running' | 'stopped' = 'all';
+  let proxyFilter: 'all' | 'none' | 'http' | 'socks4' | 'socks5' = 'all';
+  let persistFilter: 'all' | 'on' | 'off' = 'all';
+  let tagFilter = 'all';
+
+  // Bulk select state
+  let selectMode = false;
+  let selectedInstances: Set<string> = new Set();
+  let showBulkDeleteConfirm = false;
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -45,7 +66,35 @@
     }
   });
 
+  $: filteredInstances = sortedInstances.filter(i => {
+    // Name search
+    if (searchQuery && !i.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    // Status filter
+    if (statusFilter === 'running' && !$runningInstances.has(i.id)) return false;
+    if (statusFilter === 'stopped' && $runningInstances.has(i.id)) return false;
+    // Proxy type filter
+    if (proxyFilter !== 'all') {
+      const pt = i.proxy_config?.proxy_type ?? null;
+      if (proxyFilter === 'none' && pt) return false;
+      if (proxyFilter !== 'none' && pt !== proxyFilter) return false;
+    }
+    // Persistence filter
+    if (persistFilter === 'on' && !i.persist_data) return false;
+    if (persistFilter === 'off' && i.persist_data) return false;
+    // Tag filter
+    if (tagFilter !== 'all') {
+      const tags = i.tags ?? [];
+      if (!tags.includes(tagFilter)) return false;
+    }
+    return true;
+  });
+
+  $: allTags = ($settings.tag_definitions ?? []).map(t => t.label);
+
   $: if (newInstanceName) nameError = '';
+
+  // Reset selection when exiting select mode
+  $: if (!selectMode) selectedInstances = new Set();
 
   onMount(() => {
     checkInstallation();
@@ -69,17 +118,69 @@
         newInstanceProxy.trim() || undefined,
         newInstancePersistData
       );
-      // Reset form and close modal on success
       newInstanceName = '';
       newInstanceProxy = '';
       newInstancePersistData = true;
       showCreateModal = false;
     } catch (error) {
-      console.error('Error creating instance:', error);
-      // Optionally, display an error message to the user
-      nameError = 'FAILED TO CREATE INSTANCE'; // Or a more specific error
+      nameError = 'FAILED TO CREATE INSTANCE';
     }
   }
+
+  function handleInstanceSelect(e: CustomEvent) {
+    const id = e.detail;
+    selectedInstances = new Set(selectedInstances);
+    if (selectedInstances.has(id)) {
+      selectedInstances.delete(id);
+    } else {
+      selectedInstances.add(id);
+    }
+  }
+
+  function selectAll() {
+    selectedInstances = new Set(filteredInstances.map(i => i.id));
+  }
+
+  function deselectAll() {
+    selectedInstances = new Set();
+  }
+
+  async function handleBulkLaunch() {
+    const stoppedIds = [...selectedInstances].filter(id => !$runningInstances.has(id));
+    if (stoppedIds.length === 0) {
+      addToast('All selected instances are already running', 'info');
+      return;
+    }
+    await bulkLaunch(stoppedIds);
+  }
+
+  async function handleBulkStop() {
+    const runningIds = [...selectedInstances].filter(id => $runningInstances.has(id));
+    if (runningIds.length === 0) {
+      addToast('No selected instances are running', 'info');
+      return;
+    }
+    await bulkStop(runningIds);
+  }
+
+  function handleBulkDeleteRequest() {
+    if (selectedInstances.size === 0) return;
+    // Check if any are running
+    const runningIds = [...selectedInstances].filter(id => $runningInstances.has(id));
+    if (runningIds.length > 0) {
+      addToast('Stop running instances before deleting', 'warning');
+      return;
+    }
+    showBulkDeleteConfirm = true;
+  }
+
+  async function confirmBulkDelete() {
+    await bulkDelete([...selectedInstances]);
+    selectedInstances = new Set();
+    showBulkDeleteConfirm = false;
+  }
+
+  $: hasActiveFilters = searchQuery || statusFilter !== 'all' || proxyFilter !== 'all' || persistFilter !== 'all' || tagFilter !== 'all';
 </script>
 
 {#if $camoufoxDownloaded === null}
@@ -120,6 +221,15 @@
       <div class="header-actions">
         <button 
           class="view-toggle" 
+          class:toggle-active={selectMode}
+          aria-label="Toggle selection mode"
+          on:click={() => selectMode = !selectMode}
+          title="Multi-select"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="6.5" x2="21" y2="6.5"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>
+        </button>
+        <button 
+          class="view-toggle" 
           aria-label="Toggle view mode"
           on:click={() => viewMode = viewMode === 'grid' ? 'list' : 'grid'}
         >
@@ -136,15 +246,72 @@
       </div>
     </div>
 
+    <!-- Filter Bar -->
+    <div class="filter-bar">
+      <div class="search-input-wrapper">
+        <svg class="search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input 
+          type="text" 
+          class="search-input" 
+          placeholder="SEARCH..." 
+          bind:value={searchQuery}
+        />
+        {#if searchQuery}
+          <button class="search-clear" on:click={() => searchQuery = ''} aria-label="Clear search">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        {/if}
+      </div>
+      <select class="filter-select" bind:value={statusFilter}>
+        <option value="all">ALL STATUS</option>
+        <option value="running">RUNNING</option>
+        <option value="stopped">STOPPED</option>
+      </select>
+      <select class="filter-select" bind:value={proxyFilter}>
+        <option value="all">ALL PROXY</option>
+        <option value="none">NO PROXY</option>
+        <option value="http">HTTP</option>
+        <option value="socks4">SOCKS4</option>
+        <option value="socks5">SOCKS5</option>
+      </select>
+      <select class="filter-select" bind:value={persistFilter}>
+        <option value="all">ALL DATA</option>
+        <option value="on">RETAINING</option>
+        <option value="off">WIPING</option>
+      </select>
+      {#if allTags.length > 0}
+        <select class="filter-select" bind:value={tagFilter}>
+          <option value="all">ALL TAGS</option>
+          {#each allTags as tag}
+            <option value={tag}>{tag.toUpperCase()}</option>
+          {/each}
+        </select>
+      {/if}
+      <span class="instance-count">
+        {filteredInstances.length} OF {$instances.length}
+      </span>
+    </div>
+
     {#if $instances.length === 0}
       <div class="empty-state bento-panel">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="18" height="18"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
         <p>NO INSTANCES FOUND</p>
       </div>
+    {:else if filteredInstances.length === 0}
+      <div class="empty-state bento-panel">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <p>NO MATCHING INSTANCES</p>
+        {#if hasActiveFilters}
+          <button class="btn btn-sm" on:click={() => { searchQuery = ''; statusFilter = 'all'; proxyFilter = 'all'; persistFilter = 'all'; tagFilter = 'all'; }}>CLEAR FILTERS</button>
+        {/if}
+      </div>
     {:else}
       <div class={viewMode === 'grid' ? 'instances-grid' : 'instances-list'}>
         {#if viewMode === 'list'}
           <div class="list-header">
+            {#if selectMode}
+              <span class="col-checkbox"></span>
+            {/if}
             <button
               class="col-name sort-btn"
               class:sort-active={sortField === 'name'}
@@ -166,9 +333,29 @@
             <span class="col-actions">ACTIONS</span>
           </div>
         {/if}
-        {#each sortedInstances as instance (instance.id)}
-          <InstanceCard {instance} compact={viewMode === 'list'} />
+        {#each filteredInstances as instance (instance.id)}
+          <InstanceCard 
+            {instance} 
+            compact={viewMode === 'list'} 
+            selectable={selectMode}
+            selected={selectedInstances.has(instance.id)}
+            on:select={handleInstanceSelect}
+          />
         {/each}
+      </div>
+    {/if}
+
+    <!-- Bulk action bar -->
+    {#if selectMode && selectedInstances.size > 0}
+      <div class="bulk-bar bento-panel">
+        <span class="bulk-count">{selectedInstances.size} SELECTED</span>
+        <div class="bulk-actions">
+          <button class="btn btn-sm" on:click={selectAll}>ALL</button>
+          <button class="btn btn-sm" on:click={deselectAll}>NONE</button>
+          <button class="btn btn-primary btn-sm" on:click={handleBulkLaunch}>LAUNCH ALL</button>
+          <button class="btn btn-stop btn-sm" on:click={handleBulkStop}>STOP ALL</button>
+          <button class="btn btn-danger btn-sm" on:click={handleBulkDeleteRequest}>DELETE ALL</button>
+        </div>
       </div>
     {/if}
   </div>
@@ -223,6 +410,16 @@
     </div>
   </form>
 </Modal>
+
+<ConfirmationModal
+  show={showBulkDeleteConfirm}
+  title="DELETE {selectedInstances.size} INSTANCE{selectedInstances.size > 1 ? 'S' : ''}?"
+  message="THIS WILL PERMANENTLY DELETE ALL SELECTED INSTANCES AND THEIR DATA. THIS ACTION CANNOT BE UNDONE."
+  confirmText="DELETE ALL"
+  danger={true}
+  on:confirm={confirmBulkDelete}
+  on:cancel={() => showBulkDeleteConfirm = false}
+/>
 
 <style>
   .loading-state {
@@ -302,7 +499,7 @@
   .dashboard {
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: 1.5rem;
   }
 
   .dashboard-header {
@@ -356,11 +553,12 @@
     margin-bottom: 0.5rem;
   }
 
+  .col-checkbox { width: 20px; }
   .col-name { flex: 1; padding-left: 14px; }
   .col-proxy { width: 200px; }
   .col-setting { width: 80px; text-align: center; }
   .col-date { width: 100px; text-align: left; }
-  .col-actions { width: 200px; text-align: right; }
+  .col-actions { width: 240px; text-align: right; }
 
   .sort-btn {
     background: none;
@@ -416,6 +614,156 @@
   .view-toggle:hover {
     border-color: var(--text-main);
     color: var(--text-main);
+  }
+
+  .view-toggle.toggle-active {
+    border-color: var(--text-main);
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .search-input-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 150px;
+    max-width: 250px;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .search-input {
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    color: var(--text-main);
+    font-family: inherit;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    padding: 0.45rem 1.8rem 0.45rem 1.8rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .search-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .search-input:focus {
+    border-color: var(--text-main);
+  }
+
+  .search-clear {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.2rem;
+    display: flex;
+  }
+
+  .search-clear:hover {
+    color: var(--text-main);
+  }
+
+  .filter-select {
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    padding: 0.45rem 0.5rem;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+  }
+
+  .filter-select:focus {
+    border-color: var(--text-main);
+    color: var(--text-main);
+  }
+
+  .filter-select option {
+    background: #111111;
+    color: var(--text-main);
+  }
+
+  .instance-count {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  /* Bulk action bar */
+  .bulk-bar {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.75rem 1.5rem;
+    z-index: 100;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--text-muted);
+  }
+
+  .bulk-count {
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    color: var(--text-main);
+    white-space: nowrap;
+  }
+
+  .bulk-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .btn-stop {
+    border-color: var(--accent-warning);
+    color: var(--accent-warning);
+  }
+
+  .btn-stop:hover {
+    background: var(--accent-warning);
+    color: var(--text-inverse);
+  }
+
+  .btn-sm {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.65rem;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
 
   .modal-header h3 {

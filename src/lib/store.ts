@@ -2,6 +2,32 @@ import { writable, derived } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+// ── Toast System ────────────────────────────────────────────────────────
+
+export interface Toast {
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  duration: number;
+}
+
+export const toasts = writable<Toast[]>([]);
+
+let toastCounter = 0;
+
+export function addToast(message: string, type: Toast['type'] = 'info', duration?: number) {
+  const id = `toast-${++toastCounter}-${Date.now()}`;
+  const d = duration ?? (type === 'error' ? 5000 : 3000);
+  toasts.update(t => [...t, { id, message, type, duration: d }]);
+  setTimeout(() => removeToast(id), d);
+}
+
+export function removeToast(id: string) {
+  toasts.update(t => t.filter(toast => toast.id !== id));
+}
+
+// ── Interfaces ──────────────────────────────────────────────────────────
+
 export interface FingerprintConfig {
   // Navigator
   user_agent?: string | null;
@@ -126,6 +152,14 @@ export interface InstanceConfig {
   created_at: number;
   fingerprint?: FingerprintConfig | null;
   proxy_config?: ProxyConfig | null;
+  tags?: string[] | null;
+  notes?: string | null;
+  proxy_pool?: ProxyConfig[] | null;
+  proxy_rotation_mode?: string | null;
+  proxy_rotation_index?: number | null;
+  fingerprint_pool?: FingerprintConfig[] | null;
+  fingerprint_rotation_mode?: string | null;
+  fingerprint_rotation_index?: number | null;
 }
 
 export interface PresetNavigator {
@@ -161,10 +195,47 @@ export interface RunningInstance {
   pid: number;
 }
 
+export interface TagDefinition {
+  label: string;
+  color: string;
+}
+
 export interface AppSettings {
   skip_wipe_confirmation: boolean;
   skip_delete_confirmation: boolean;
+  default_view_mode?: string | null;
+  default_sort_field?: string | null;
+  default_sort_dir?: string | null;
+  default_proxy_template?: ProxyConfig | null;
+  default_fingerprint_template?: FingerprintConfig | null;
+  camoufox_path?: string | null;
+  tag_definitions?: TagDefinition[] | null;
 }
+
+export interface ProxyTestResult {
+  success: boolean;
+  ip?: string | null;
+  country?: string | null;
+  city?: string | null;
+  latency_ms?: number | null;
+  dns_leak?: boolean | null;
+  error?: string | null;
+}
+
+export interface SessionInfo {
+  profile_size_bytes: number;
+  cookies_exists: boolean;
+  local_storage_size?: number | null;
+  cache_size?: number | null;
+  session_store_exists: boolean;
+  has_history: boolean;
+}
+
+export interface FingerprintConflict {
+  message: string;
+}
+
+// ── Stores ──────────────────────────────────────────────────────────────
 
 export const camoufoxDownloaded = writable<boolean | null>(null);
 export const installProgress = writable<{ status: string; progress: number } | null>(null);
@@ -278,6 +349,8 @@ export const presetDerivedOptions = derived(fingerprintPresets, ($presets) => {
   };
 });
 
+// ── Core Functions ──────────────────────────────────────────────────────
+
 export async function checkInstallation() {
   try {
     const isDownloaded = await invoke<boolean>('check_camoufox');
@@ -343,8 +416,10 @@ export async function createInstance(name: string, proxy?: string, persistData: 
   try {
     await invoke('create_instance', { name, proxy, persistData });
     await loadInstances();
+    addToast('Instance created', 'success');
   } catch (e) {
     console.error('Failed to create instance', e);
+    addToast(`Failed to create instance: ${e}`, 'error');
     throw e;
   }
 }
@@ -353,8 +428,10 @@ export async function togglePersistence(id: string, enabled: boolean) {
   try {
     await invoke('toggle_persistence', { id, enabled });
     await loadInstances();
+    addToast(enabled ? 'Data retention enabled' : 'Data retention disabled', 'success');
   } catch (e) {
     console.error('Failed to toggle persistence', e);
+    addToast(`Failed to toggle persistence: ${e}`, 'error');
   }
 }
 
@@ -362,25 +439,29 @@ export async function deleteInstance(id: string) {
   try {
     await invoke('delete_instance', { id });
     await loadInstances();
+    addToast('Instance deleted', 'success');
   } catch (e) {
     console.error('Failed to delete instance', e);
+    addToast(`Failed to delete instance: ${e}`, 'error');
     throw e;
   }
 }
 
-export async function launchInstance(id: string) {
+export async function launchInstance(id: string, startupUrl?: string) {
   isLaunching.set(id);
   try {
-    const pid = await invoke<number>('launch_instance', { id });
+    const pid = await invoke<number>('launch_instance', { id, startupUrl: startupUrl ?? null });
     // Mark this instance as running immediately
     runningInstances.update(set => {
       const next = new Set(set);
       next.add(id);
       return next;
     });
+    addToast('Instance launched', 'success');
     return pid;
   } catch (e) {
     console.error('Failed to launch instance', e);
+    addToast(`Failed to launch instance: ${e}`, 'error');
     throw e;
   } finally {
     isLaunching.set(null);
@@ -397,8 +478,10 @@ export async function stopInstance(id: string) {
       next.delete(id);
       return next;
     });
+    addToast('Instance stopped', 'success');
   } catch (e) {
     console.error('Failed to stop instance', e);
+    addToast(`Failed to stop instance: ${e}`, 'error');
     throw e;
   }
 }
@@ -427,20 +510,22 @@ export async function updateSettings(newSettings: Partial<AppSettings>) {
     settings.set(newSettings as AppSettings);
   } catch (e) {
     console.error('Failed to update settings', e);
+    addToast(`Failed to save settings: ${e}`, 'error');
   }
-}
-
-export interface FingerprintConflict {
-  message: string;
 }
 
 export async function updateInstanceSettings(id: string, fingerprint: FingerprintConfig): Promise<FingerprintConflict[]> {
   try {
     const conflicts = await invoke<FingerprintConflict[]>('update_instance_settings', { id, fingerprint });
     await loadInstances();
+    addToast('Fingerprint settings saved', 'success');
+    if (conflicts && conflicts.length > 0) {
+      addToast(`${conflicts.length} fingerprint conflict(s) detected`, 'warning');
+    }
     return conflicts ?? [];
   } catch (e) {
     console.error('Failed to update instance settings', e);
+    addToast(`Failed to save settings: ${e}`, 'error');
     throw e;
   }
 }
@@ -449,8 +534,191 @@ export async function updateInstanceProxy(id: string, proxyConfig: ProxyConfig |
   try {
     await invoke('update_instance_proxy', { id, proxyConfig });
     await loadInstances();
+    addToast('Proxy settings saved', 'success');
   } catch (e) {
     console.error('Failed to update instance proxy', e);
+    addToast(`Failed to save proxy: ${e}`, 'error');
     throw e;
+  }
+}
+
+// ── Instance Rename ─────────────────────────────────────────────────────
+
+export async function renameInstance(id: string, newName: string): Promise<void> {
+  try {
+    await invoke('rename_instance', { id, newName });
+    await loadInstances();
+    addToast('Instance renamed', 'success');
+  } catch (e) {
+    console.error('Failed to rename instance', e);
+    addToast(`Failed to rename: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Tags ────────────────────────────────────────────────────────────────
+
+export async function updateInstanceTags(id: string, tags: string[]): Promise<void> {
+  try {
+    await invoke('update_instance_tags', { id, tags });
+    await loadInstances();
+    addToast('Tags updated', 'success');
+  } catch (e) {
+    console.error('Failed to update tags', e);
+    addToast(`Failed to update tags: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Notes ───────────────────────────────────────────────────────────────
+
+export async function updateInstanceNotes(id: string, notes: string | null): Promise<void> {
+  try {
+    await invoke('update_instance_notes', { id, notes });
+    await loadInstances();
+  } catch (e) {
+    console.error('Failed to update notes', e);
+    addToast(`Failed to save notes: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Import / Export ─────────────────────────────────────────────────────
+
+export async function exportInstance(id: string): Promise<string> {
+  try {
+    const json = await invoke<string>('export_instance', { id });
+    addToast('Instance exported', 'success');
+    return json;
+  } catch (e) {
+    console.error('Failed to export instance', e);
+    addToast(`Failed to export: ${e}`, 'error');
+    throw e;
+  }
+}
+
+export async function exportAllInstances(): Promise<string> {
+  try {
+    const json = await invoke<string>('export_all_instances');
+    addToast('All instances exported', 'success');
+    return json;
+  } catch (e) {
+    console.error('Failed to export all instances', e);
+    addToast(`Failed to export: ${e}`, 'error');
+    throw e;
+  }
+}
+
+export async function importInstances(json: string): Promise<InstanceConfig[]> {
+  try {
+    const imported = await invoke<InstanceConfig[]>('import_instances', { json });
+    await loadInstances();
+    addToast(`Imported ${imported.length} instance(s)`, 'success');
+    return imported;
+  } catch (e) {
+    console.error('Failed to import instances', e);
+    addToast(`Failed to import: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Proxy Testing ───────────────────────────────────────────────────────
+
+export async function testProxy(proxyConfig: ProxyConfig): Promise<ProxyTestResult> {
+  try {
+    return await invoke<ProxyTestResult>('test_proxy', { proxyConfig });
+  } catch (e) {
+    console.error('Proxy test failed', e);
+    addToast(`Proxy test failed: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Proxy Pool / Rotation ───────────────────────────────────────────────
+
+export async function updateProxyPool(id: string, pool: ProxyConfig[], mode: string | null): Promise<void> {
+  try {
+    await invoke('update_proxy_pool', { id, pool, mode });
+    await loadInstances();
+    addToast('Proxy rotation updated', 'success');
+  } catch (e) {
+    console.error('Failed to update proxy pool', e);
+    addToast(`Failed to update proxy pool: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Fingerprint Pool / Rotation ─────────────────────────────────────────
+
+export async function updateFingerprintPool(id: string, pool: FingerprintConfig[], mode: string | null): Promise<void> {
+  try {
+    await invoke('update_fingerprint_pool', { id, pool, mode });
+    await loadInstances();
+    addToast('Fingerprint rotation updated', 'success');
+  } catch (e) {
+    console.error('Failed to update fingerprint pool', e);
+    addToast(`Failed to update fingerprint pool: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Session Management ──────────────────────────────────────────────────
+
+export async function getSessionInfo(id: string): Promise<SessionInfo> {
+  try {
+    return await invoke<SessionInfo>('get_session_info', { id });
+  } catch (e) {
+    console.error('Failed to get session info', e);
+    addToast(`Failed to load session info: ${e}`, 'error');
+    throw e;
+  }
+}
+
+export async function clearSessionData(id: string, types: string[]): Promise<void> {
+  try {
+    await invoke('clear_session_data', { id, types });
+    addToast('Session data cleared', 'success');
+  } catch (e) {
+    console.error('Failed to clear session data', e);
+    addToast(`Failed to clear data: ${e}`, 'error');
+    throw e;
+  }
+}
+
+// ── Bulk Operations ─────────────────────────────────────────────────────
+
+export async function bulkLaunch(ids: string[]): Promise<void> {
+  let launched = 0;
+  for (const id of ids) {
+    try {
+      await launchInstance(id);
+      launched++;
+      // Small delay between launches to avoid overwhelming the system
+      if (launched < ids.length) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    } catch (e) {
+      // Individual errors are already toasted by launchInstance
+    }
+  }
+}
+
+export async function bulkStop(ids: string[]): Promise<void> {
+  await Promise.all(ids.map(id => stopInstance(id).catch(() => {})));
+}
+
+export async function bulkDelete(ids: string[]): Promise<void> {
+  let deleted = 0;
+  for (const id of ids) {
+    try {
+      await invoke('delete_instance', { id });
+      deleted++;
+    } catch (e) {
+      // continue
+    }
+  }
+  await loadInstances();
+  if (deleted > 0) {
+    addToast(`Deleted ${deleted} instance(s)`, 'success');
   }
 }

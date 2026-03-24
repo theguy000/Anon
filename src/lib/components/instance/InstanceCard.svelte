@@ -1,12 +1,26 @@
 <script lang="ts">
-  import { deleteInstance, launchInstance, stopInstance, isLaunching, runningInstances, togglePersistence, settings, updateSettings } from '$lib/store';
-  import type { InstanceConfig } from '$lib/store';
+  import { createEventDispatcher } from 'svelte';
+  import { deleteInstance, launchInstance, stopInstance, isLaunching, runningInstances, togglePersistence, settings, updateSettings, renameInstance, instances, addToast } from '$lib/store';
+  import type { InstanceConfig, TagDefinition } from '$lib/store';
   import { get } from 'svelte/store';
   import ConfirmationModal from '$lib/components/instance/ConfirmationModal.svelte';
   import InstanceSettingsModal from '$lib/components/instance/InstanceSettingsModal.svelte';
 
+  const dispatch = createEventDispatcher();
+
   export let instance: InstanceConfig;
   export let compact = false;
+  export let selectable = false;
+  export let selected = false;
+
+  // Inline rename state
+  let editing = false;
+  let editName = '';
+  let editError = '';
+  let editInput: HTMLInputElement;
+
+  // Launch dropdown state
+  let showLaunchDropdown = false;
 
   let showConfirm = false;
   let showDeleteConfirm = false;
@@ -14,6 +28,60 @@
 
   $: isRunning = $runningInstances.has(instance.id);
   $: isCurrentlyLaunching = $isLaunching === instance.id;
+  $: tagDefs = ($settings.tag_definitions ?? []) as TagDefinition[];
+  $: instanceTags = (instance.tags ?? []).map(label => {
+    const def = tagDefs.find(t => t.label === label);
+    return { label, color: def?.color ?? '#888888' };
+  });
+
+  const FP_TEST_SITES = [
+    { label: 'BROWSERLEAKS.COM', url: 'https://browserleaks.com' },
+    { label: 'CREEPJS.COM', url: 'https://abrahamjuliot.github.io/creepjs/' },
+    { label: 'IPHEY.COM', url: 'https://iphey.com' },
+    { label: 'PIXELSCAN.NET', url: 'https://pixelscan.net' },
+  ];
+
+  function startEdit() {
+    if (isRunning) return;
+    editing = true;
+    editName = instance.name;
+    editError = '';
+    // Focus the input after it renders
+    setTimeout(() => editInput?.focus(), 0);
+  }
+
+  async function saveEdit() {
+    const trimmed = editName.trim();
+    if (!trimmed) {
+      editError = 'Name cannot be empty';
+      return;
+    }
+    const allInstances = get(instances);
+    if (allInstances.some(i => i.id !== instance.id && i.name.toLowerCase() === trimmed.toLowerCase())) {
+      editError = 'Name already exists';
+      return;
+    }
+    try {
+      await renameInstance(instance.id, trimmed);
+      editing = false;
+    } catch (e) {
+      editError = String(e);
+    }
+  }
+
+  function cancelEdit() {
+    editing = false;
+    editError = '';
+  }
+
+  function handleEditKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveEdit();
+    } else if (e.key === 'Escape') {
+      cancelEdit();
+    }
+  }
 
   function handlePersistenceToggle(e: Event) {
     const target = e.currentTarget as HTMLInputElement;
@@ -49,11 +117,12 @@
     return new Date(timestamp * 1000).toLocaleDateString();
   }
 
-  async function handleLaunch() {
+  async function handleLaunch(url?: string) {
+    showLaunchDropdown = false;
     try {
-      await launchInstance(instance.id);
+      await launchInstance(instance.id, url);
     } catch (e) {
-      // Error already logged in store
+      // Error already toasted in store
     }
   }
 
@@ -61,7 +130,7 @@
     try {
       await stopInstance(instance.id);
     } catch (e) {
-      // Error already logged in store
+      // Error already toasted in store
     }
   }
 
@@ -71,7 +140,7 @@
       try {
         await deleteInstance(instance.id);
       } catch (err) {
-        // Error already logged in store
+        // Error already toasted in store
       }
     } else {
       showDeleteConfirm = true;
@@ -85,7 +154,7 @@
     try {
       await deleteInstance(instance.id);
     } catch (err) {
-      // Error already logged in store
+      // Error already toasted in store
     }
     showDeleteConfirm = false;
   }
@@ -93,16 +162,75 @@
   function cancelDelete() {
     showDeleteConfirm = false;
   }
+
+  function handleSelect() {
+    dispatch('select', instance.id);
+  }
+
+  function handleCardClick() {
+    if (selectable) {
+      handleSelect();
+    }
+  }
+
+  // Close dropdown when clicking outside
+  function handleWindowClick() {
+    showLaunchDropdown = false;
+  }
 </script>
 
+<svelte:window on:click={handleWindowClick} />
+
 {#if compact}
-<div class="instance-row bento-panel" class:instance-running={isRunning}>
+<div 
+  class="instance-row bento-panel" 
+  class:instance-running={isRunning}
+  class:instance-selected={selected}
+  on:click={handleCardClick}
+  on:keydown={e => e.key === 'Enter' && handleCardClick()}
+  role={selectable ? 'button' : 'article'}
+  tabindex={selectable ? 0 : -1}
+>
+  {#if selectable}
+    <label class="select-checkbox" on:click|stopPropagation>
+      <input type="checkbox" checked={selected} on:change={handleSelect} />
+    </label>
+  {/if}
   <span class="row-name">
     <span class="status-dot" class:active={isRunning}></span>
-    {instance.name.toUpperCase()}
+    {#if editing}
+      <input 
+        class="inline-edit-input"
+        class:input-error={!!editError}
+        bind:value={editName}
+        bind:this={editInput}
+        on:keydown={handleEditKeydown}
+        on:blur={cancelEdit}
+        on:click|stopPropagation
+      />
+    {:else}
+      <span 
+        class="name-text" 
+        class:editable={!isRunning}
+        on:dblclick={startEdit}
+        role="textbox"
+        tabindex="0"
+        title={isRunning ? '' : 'Double-click to rename'}
+      >
+        {instance.name.toUpperCase()}
+      </span>
+    {/if}
+    {#each instanceTags as tag}
+      <span class="tag-pill" style="border-color: {tag.color}; color: {tag.color}">{tag.label}</span>
+    {/each}
+    {#if instance.notes}
+      <span class="notes-indicator" title={instance.notes}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </span>
+    {/if}
   </span>
   <span class="row-proxy">{instance.proxy || 'NONE'}</span>
-  <div class="row-setting">
+  <div class="row-setting" on:click|stopPropagation>
     <label class="switch">
       <input 
         type="checkbox" 
@@ -113,23 +241,42 @@
     </label>
   </div>
   <span class="row-date">{formatDate(instance.created_at)}</span>
-  <div class="row-actions">
+  <div class="row-actions" on:click|stopPropagation>
     {#if isRunning}
       <button class="btn btn-stop btn-sm" on:click={handleStop}>
         STOP
       </button>
     {:else}
-      <button 
-        class="btn btn-primary btn-sm" 
-        disabled={isCurrentlyLaunching}
-        on:click={handleLaunch}
-      >
-        {#if isCurrentlyLaunching}
-          <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
-        {:else}
-          LAUNCH
-        {/if}
-      </button>
+      <div class="launch-group">
+        <button 
+          class="btn btn-primary btn-sm" 
+          disabled={isCurrentlyLaunching}
+          on:click={() => handleLaunch()}
+        >
+          {#if isCurrentlyLaunching}
+            <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
+          {:else}
+            LAUNCH
+          {/if}
+        </button>
+        <button 
+          class="btn btn-primary btn-sm launch-dropdown-btn"
+          disabled={isCurrentlyLaunching}
+          on:click|stopPropagation={() => showLaunchDropdown = !showLaunchDropdown}
+          aria-label="Launch options"
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if showLaunchDropdown}
+        <div class="launch-dropdown" on:click|stopPropagation>
+          {#each FP_TEST_SITES as site}
+            <button class="dropdown-item" on:click={() => handleLaunch(site.url)}>
+              LAUNCH &rarr; {site.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
     <button 
       class="btn btn-danger btn-sm" 
@@ -145,21 +292,68 @@
   </div>
 </div>
 {:else}
-<div class="instance-card bento-panel" class:instance-running={isRunning}>
+<div 
+  class="instance-card bento-panel" 
+  class:instance-running={isRunning}
+  class:instance-selected={selected}
+  on:click={handleCardClick}
+  on:keydown={e => e.key === 'Enter' && handleCardClick()}
+  role={selectable ? 'button' : 'article'}
+  tabindex={selectable ? 0 : -1}
+>
+  {#if selectable}
+    <label class="select-checkbox card-checkbox" on:click|stopPropagation>
+      <input type="checkbox" checked={selected} on:change={handleSelect} />
+    </label>
+  {/if}
   <div class="card-header">
     <div class="card-title-group">
       <span class="status-dot" class:active={isRunning}></span>
-      <h3>{instance.name.toUpperCase()}</h3>
+      {#if editing}
+        <input 
+          class="inline-edit-input"
+          class:input-error={!!editError}
+          bind:value={editName}
+          bind:this={editInput}
+          on:keydown={handleEditKeydown}
+          on:blur={cancelEdit}
+          on:click|stopPropagation
+        />
+      {:else}
+        <h3 
+          class:editable={!isRunning}
+          on:dblclick={startEdit}
+          role="textbox"
+          tabindex="0"
+          title={isRunning ? '' : 'Double-click to rename'}
+        >
+          {instance.name.toUpperCase()}
+        </h3>
+      {/if}
     </div>
     <span class="date">{formatDate(instance.created_at)}</span>
   </div>
+
+  {#if instanceTags.length > 0}
+    <div class="card-tags">
+      {#each instanceTags as tag}
+        <span class="tag-pill" style="border-color: {tag.color}; color: {tag.color}">{tag.label}</span>
+      {/each}
+    </div>
+  {/if}
+
+  {#if instance.notes}
+    <div class="card-notes" title={instance.notes}>
+      {instance.notes.length > 80 ? instance.notes.substring(0, 80) + '...' : instance.notes}
+    </div>
+  {/if}
   
   <div class="card-body">
     <div class="detail">
       <span class="label">PROXY</span>
       <span class="value">{instance.proxy || 'NONE'}</span>
     </div>
-    <div class="detail setting-detail">
+    <div class="detail setting-detail" on:click|stopPropagation>
       <div class="label-group">
         <span class="label">RETAIN DATA</span>
         <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
@@ -175,24 +369,43 @@
     </div>
   </div>
 
-  <div class="card-actions">
+  <div class="card-actions" on:click|stopPropagation>
     {#if isRunning}
       <button class="btn btn-stop" on:click={handleStop}>
         STOP
       </button>
     {:else}
-      <button 
-        class="btn btn-primary" 
-        disabled={isCurrentlyLaunching}
-        on:click={handleLaunch}
-      >
-        {#if isCurrentlyLaunching}
-          <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
-          LAUNCHING
-        {:else}
-          LAUNCH
-        {/if}
-      </button>
+      <div class="launch-group">
+        <button 
+          class="btn btn-primary" 
+          disabled={isCurrentlyLaunching}
+          on:click={() => handleLaunch()}
+        >
+          {#if isCurrentlyLaunching}
+            <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
+            LAUNCHING
+          {:else}
+            LAUNCH
+          {/if}
+        </button>
+        <button 
+          class="btn btn-primary launch-dropdown-btn"
+          disabled={isCurrentlyLaunching}
+          on:click|stopPropagation={() => showLaunchDropdown = !showLaunchDropdown}
+          aria-label="Launch options"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if showLaunchDropdown}
+        <div class="launch-dropdown" on:click|stopPropagation>
+          {#each FP_TEST_SITES as site}
+            <button class="dropdown-item" on:click={() => handleLaunch(site.url)}>
+              LAUNCH &rarr; {site.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
     <button 
       class="btn btn-danger" 
@@ -245,6 +458,7 @@
     flex-direction: column;
     gap: 1.5rem;
     transition: border-color 0.2s ease;
+    position: relative;
   }
 
   .instance-card:hover {
@@ -262,6 +476,12 @@
     box-shadow: 0 0 0 1px var(--accent-running);
   }
 
+  .instance-card.instance-selected,
+  .instance-row.instance-selected {
+    border-color: var(--text-main);
+    box-shadow: 0 0 0 1px var(--text-main);
+  }
+
   .card-header {
     display: flex;
     justify-content: space-between;
@@ -274,6 +494,8 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
   }
 
   .card-header h3 {
@@ -361,6 +583,7 @@
     margin-top: 0.5rem;
     border-top: 1px solid var(--panel-border);
     padding-top: 1.5rem;
+    position: relative;
   }
 
   .card-actions button {
@@ -378,6 +601,7 @@
     gap: 2rem;
     padding: 0.75rem 1.25rem;
     transition: border-color 0.2s ease;
+    position: relative;
   }
 
   .instance-row:hover {
@@ -394,6 +618,7 @@
     gap: 0.5rem;
     position: relative;
     padding-left: 14px;
+    min-width: 0;
   }
 
   .row-name .status-dot {
@@ -430,9 +655,10 @@
   .row-actions {
     display: flex;
     gap: 0.5rem;
-    width: 200px;
+    width: 240px;
     justify-content: flex-end;
     align-items: center;
+    position: relative;
   }
 
   .btn-sm {
@@ -465,6 +691,158 @@
 
   .icon-btn:hover {
     border-color: var(--text-main);
+    color: var(--text-main);
+  }
+
+  /* Inline edit */
+  .inline-edit-input {
+    background: transparent;
+    border: 1px solid var(--text-main);
+    color: var(--text-main);
+    font-family: inherit;
+    font-size: inherit;
+    letter-spacing: 0.1em;
+    padding: 0.15rem 0.4rem;
+    margin-top: calc(-0.15rem - 1px);
+    margin-bottom: calc(-0.15rem - 1px);
+    margin-left: calc(-0.4rem - 1px);
+    margin-right: 0;
+    outline: none;
+    width: 100%;
+    max-width: 200px;
+    box-sizing: content-box;
+  }
+
+  .inline-edit-input.input-error {
+    border-color: var(--accent-danger);
+  }
+
+  .name-text.editable {
+    cursor: text;
+  }
+
+  .name-text.editable:hover {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--text-muted);
+  }
+
+  h3.editable {
+    cursor: text;
+  }
+
+  h3.editable:hover {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--text-muted);
+  }
+
+  /* Tags */
+  .tag-pill {
+    font-size: 0.55rem;
+    letter-spacing: 0.05em;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid;
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+
+  .card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: -0.5rem;
+  }
+
+  /* Notes */
+  .card-notes {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+    margin-top: -0.5rem;
+  }
+
+  .notes-indicator {
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  /* Selection checkbox */
+  .select-checkbox {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .select-checkbox input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--text-main);
+    cursor: pointer;
+  }
+
+  .card-checkbox {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+  }
+
+  /* Launch dropdown */
+  .launch-group {
+    display: flex;
+    flex: 1;
+  }
+
+  .launch-group .btn:first-child {
+    flex: 1;
+    border-right: none;
+  }
+
+  .launch-dropdown-btn {
+    padding: 0.3rem 0.4rem;
+    flex: 0 !important;
+  }
+
+  .launch-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #111111;
+    border: 1px solid var(--panel-border);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    margin-top: 0.25rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  }
+
+  .dropdown-item {
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--panel-border);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    padding: 0.6rem 0.75rem;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .dropdown-item:last-child {
+    border-bottom: none;
+  }
+
+  .dropdown-item:hover {
+    background: var(--panel-border);
     color: var(--text-main);
   }
 

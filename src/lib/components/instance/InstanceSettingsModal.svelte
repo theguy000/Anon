@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
-  import { updateInstanceSettings, updateInstanceProxy } from "$lib/store";
-  import type { FingerprintConfig, InstanceConfig, FingerprintConflict, ProxyConfig } from "$lib/store";
+  import { updateInstanceSettings, updateInstanceProxy, updateInstanceNotes, updateInstanceTags, settings } from "$lib/store";
+  import type { FingerprintConfig, InstanceConfig, FingerprintConflict, ProxyConfig, TagDefinition } from "$lib/store";
 
   // Sections
   import NavigatorSection from "./settings/NavigatorSection.svelte";
@@ -34,13 +34,20 @@
   export let instance: InstanceConfig;
 
   // Tab state
-  let activeTab: 'fingerprint' | 'proxy' = 'fingerprint';
+  let activeTab: 'fingerprint' | 'proxy' | 'notes' = 'fingerprint';
 
   let fp: FingerprintConfig = {};
   let proxyConfig: ProxyConfig = {};
   let saving = false;
   let conflicts: FingerprintConflict[] = [];
   let sections: Record<string, boolean> = {};
+
+  // Notes
+  let notes = '';
+
+  // Tags
+  let instanceTags: string[] = [];
+  $: availableTags = ($settings.tag_definitions ?? []) as TagDefinition[];
 
   // State helpers
   let selectedScreenPreset = "";
@@ -64,6 +71,8 @@
   $: if (show && instance) {
     fp = instance.fingerprint ? { ...instance.fingerprint } : {};
     proxyConfig = instance.proxy_config ? { ...instance.proxy_config } : {};
+    notes = instance.notes ?? '';
+    instanceTags = instance.tags ? [...instance.tags] : [];
     saving = false;
     activeTab = 'fingerprint';
     selectedScreenPreset = "";
@@ -133,6 +142,11 @@
     saving = true;
     conflicts = [];
     try {
+      // Always save notes and tags
+      const trimmedNotes = notes.trim();
+      await updateInstanceNotes(instance.id, trimmedNotes || null);
+      await updateInstanceTags(instance.id, instanceTags);
+
       if (activeTab === 'proxy') {
         // Save proxy settings
         const hasProxy = proxyConfig.proxy_type && proxyConfig.host && proxyConfig.port;
@@ -178,6 +192,9 @@
   function handleReset() {
     if (activeTab === 'proxy') {
       proxyConfig = {};
+    } else if (activeTab === 'notes') {
+      notes = '';
+      instanceTags = [];
     } else {
       fp = {};
       selectedScreenPreset = "";
@@ -245,6 +262,16 @@
           <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
         </svg>
         PROXY
+      </button>
+      <button
+        class="tab-item"
+        class:tab-active={activeTab === 'notes'}
+        on:click={() => activeTab = 'notes'}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        NOTES
       </button>
     </div>
 
@@ -361,6 +388,44 @@
 
       {#if activeTab === 'proxy'}
       <ProxySection bind:proxyConfig />
+      {/if}
+
+      {#if activeTab === 'notes'}
+      <div class="notes-tab-content">
+        <div class="notes-field">
+          <label for="instance-notes">NOTES</label>
+          <textarea
+            id="instance-notes"
+            class="notes-textarea"
+            placeholder="Add notes about this instance..."
+            bind:value={notes}
+            rows="5"
+          ></textarea>
+        </div>
+        {#if availableTags.length > 0}
+          <div class="tags-field">
+            <label>TAGS</label>
+            <div class="tags-selector">
+              {#each availableTags as tagDef}
+                <button
+                  class="tag-toggle"
+                  class:tag-active={instanceTags.includes(tagDef.label)}
+                  style="border-color: {tagDef.color}; color: {instanceTags.includes(tagDef.label) ? '#000' : tagDef.color}; background: {instanceTags.includes(tagDef.label) ? tagDef.color : 'transparent'}"
+                  on:click={() => {
+                    if (instanceTags.includes(tagDef.label)) {
+                      instanceTags = instanceTags.filter(t => t !== tagDef.label);
+                    } else {
+                      instanceTags = [...instanceTags, tagDef.label];
+                    }
+                  }}
+                >
+                  {tagDef.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
       {/if}
     </div>
 
