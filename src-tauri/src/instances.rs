@@ -303,7 +303,7 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ProxyConfig {
-    pub proxy_type: Option<String>,   // "http", "socks4", "socks5", or null/none
+    pub proxy_type: Option<String>, // "http", "socks4", "socks5", or null/none
     pub host: Option<String>,
     pub port: Option<u16>,
     pub username: Option<String>,
@@ -376,37 +376,49 @@ fn ensure_user_js(
                 match ptype.as_str() {
                     "http" => {
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.http\", \"{}\");\n", host
+                            "user_pref(\"network.proxy.http\", \"{}\");\n",
+                            host
                         ));
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.http_port\", {});\n", port
+                            "user_pref(\"network.proxy.http_port\", {});\n",
+                            port
                         ));
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.ssl\", \"{}\");\n", host
+                            "user_pref(\"network.proxy.ssl\", \"{}\");\n",
+                            host
                         ));
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.ssl_port\", {});\n", port
+                            "user_pref(\"network.proxy.ssl_port\", {});\n",
+                            port
                         ));
                     }
                     "socks4" => {
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks\", \"{}\");\n", host
+                            "user_pref(\"network.proxy.socks\", \"{}\");\n",
+                            host
                         ));
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks_port\", {});\n", port
+                            "user_pref(\"network.proxy.socks_port\", {});\n",
+                            port
                         ));
-                        user_js_content.push_str("user_pref(\"network.proxy.socks_version\", 4);\n");
-                        user_js_content.push_str("user_pref(\"network.proxy.socks_remote_dns\", false);\n");
+                        user_js_content
+                            .push_str("user_pref(\"network.proxy.socks_version\", 4);\n");
+                        user_js_content
+                            .push_str("user_pref(\"network.proxy.socks_remote_dns\", false);\n");
                     }
                     "socks5" => {
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks\", \"{}\");\n", host
+                            "user_pref(\"network.proxy.socks\", \"{}\");\n",
+                            host
                         ));
                         user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks_port\", {});\n", port
+                            "user_pref(\"network.proxy.socks_port\", {});\n",
+                            port
                         ));
-                        user_js_content.push_str("user_pref(\"network.proxy.socks_version\", 5);\n");
-                        user_js_content.push_str("user_pref(\"network.proxy.socks_remote_dns\", true);\n");
+                        user_js_content
+                            .push_str("user_pref(\"network.proxy.socks_version\", 5);\n");
+                        user_js_content
+                            .push_str("user_pref(\"network.proxy.socks_remote_dns\", true);\n");
                     }
                     _ => {}
                 }
@@ -500,7 +512,12 @@ pub async fn create_instance(
     fs::write(config_path, config_json).map_err(|e| e.to_string())?;
 
     // Generate user.js for persistence and proxy settings
-    let _ = ensure_user_js(&instance_dir, &config.proxy, &config.proxy_config, config.persist_data);
+    let _ = ensure_user_js(
+        &instance_dir,
+        &config.proxy,
+        &config.proxy_config,
+        config.persist_data,
+    );
 
     Ok(config)
 }
@@ -641,7 +658,12 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
 
             // Immediately update user.js
-            let _ = ensure_user_js(&instance_dir, &config.proxy, &config.proxy_config, config.persist_data);
+            let _ = ensure_user_js(
+                &instance_dir,
+                &config.proxy,
+                &config.proxy_config,
+                config.persist_data,
+            );
 
             // If disabling, clean up data
             if !enabled {
@@ -728,7 +750,12 @@ pub async fn update_instance_proxy(
             fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
 
             // Regenerate user.js with updated proxy settings
-            let _ = ensure_user_js(&instance_dir, &config.proxy, &config.proxy_config, config.persist_data);
+            let _ = ensure_user_js(
+                &instance_dir,
+                &config.proxy,
+                &config.proxy_config,
+                config.persist_data,
+            );
 
             return Ok(());
         }

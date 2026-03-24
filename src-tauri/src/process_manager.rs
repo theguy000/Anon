@@ -281,7 +281,7 @@ pub fn find_browser_pid(profile_dir: &std::path::Path) -> Option<u32> {
             .with_exe(sysinfo::UpdateKind::Always),
     );
 
-    for (_pid, process) in sys.processes() {
+    for process in sys.processes().values() {
         // Only consider camoufox/firefox processes.
         let exe_name = process
             .exe()
