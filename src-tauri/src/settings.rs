@@ -1,5 +1,5 @@
 use crate::camoufox::get_app_dir;
-use crate::instances::{ProxyConfig, FingerprintConfig};
+use crate::instances::{FingerprintConfig, ProxyConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;

@@ -1,9 +1,9 @@
+use crate::instances::get_profiles_dir;
+use crate::process_manager;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use tauri::AppHandle;
-use crate::instances::get_profiles_dir;
-use crate::process_manager;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionInfo {
@@ -66,7 +66,11 @@ pub async fn get_session_info(app: &AppHandle, id: String) -> Result<SessionInfo
     })
 }
 
-pub async fn clear_session_data(app: &AppHandle, id: String, types: Vec<String>) -> Result<(), String> {
+pub async fn clear_session_data(
+    app: &AppHandle,
+    id: String,
+    types: Vec<String>,
+) -> Result<(), String> {
     if process_manager::is_running(&id) {
         return Err("Cannot clear data while instance is running".to_string());
     }

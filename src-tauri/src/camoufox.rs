@@ -105,7 +105,11 @@ pub async fn download_and_extract(app: &AppHandle) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut response = client.get(&release_info.download_url).send().await.map_err(|e| e.to_string())?;
+    let mut response = client
+        .get(&release_info.download_url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let zip_path = app_dir.join("camoufox.zip");
     let mut file = File::create(&zip_path).map_err(|e| e.to_string())?;
@@ -185,7 +189,10 @@ async fn get_latest_release_info() -> Result<ReleaseInfo, Box<dyn std::error::Er
             for release in releases {
                 let mut win_fallback: Option<String> = None;
                 for asset in &release.assets {
-                    if asset.name.starts_with("camoufox-") && asset.name.contains("win") && asset.name.ends_with(".zip") {
+                    if asset.name.starts_with("camoufox-")
+                        && asset.name.contains("win")
+                        && asset.name.ends_with(".zip")
+                    {
                         if asset.name.contains("x86_64") {
                             return Ok(ReleaseInfo {
                                 download_url: asset.browser_download_url.clone(),
@@ -217,7 +224,10 @@ async fn get_latest_release_info() -> Result<ReleaseInfo, Box<dyn std::error::Er
 
     let mut win_fallback: Option<String> = None;
     for asset in &res.assets {
-        if asset.name.starts_with("camoufox-") && asset.name.contains("win") && asset.name.ends_with(".zip") {
+        if asset.name.starts_with("camoufox-")
+            && asset.name.contains("win")
+            && asset.name.ends_with(".zip")
+        {
             if asset.name.contains("x86_64") {
                 return Ok(ReleaseInfo {
                     download_url: asset.browser_download_url.clone(),
