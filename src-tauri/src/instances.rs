@@ -76,8 +76,6 @@ pub struct FingerprintConfig {
     // WebRTC
     pub webrtc_ipv4: Option<String>,
     pub webrtc_ipv6: Option<String>,
-    pub webrtc_local_ipv4: Option<String>,
-    pub webrtc_local_ipv6: Option<String>,
 
     // HTTP Headers
     pub header_user_agent: Option<String>,
@@ -172,7 +170,10 @@ pub fn harmonize_firefox_user_agent(ua: &str, ff_version: &str) -> String {
 /// Convert a FingerprintConfig into a JSON object that camoufox understands
 /// (property keys from camoufox's properties.json).
 /// Only non-None fields are included so camoufox falls back to its defaults.
-fn build_camou_config(fp: &FingerprintConfig, target_ff_version: Option<&str>) -> serde_json::Value {
+fn build_camou_config(
+    fp: &FingerprintConfig,
+    target_ff_version: Option<&str>,
+) -> serde_json::Value {
     let mut m = serde_json::Map::new();
 
     // ── Helper macros ────────────────────────────────────────────────────
@@ -279,10 +280,22 @@ fn build_camou_config(fp: &FingerprintConfig, target_ff_version: Option<&str>) -
     set_str!("webGl:renderer", fp.webgl_renderer);
     set_str!("webGl:vendor", fp.webgl_vendor);
     if let Some(v) = fp.webgl_block_if_not_defined {
-        m.insert("webGl:parameters:blockIfNotDefined".to_string(), serde_json::json!(v));
-        m.insert("webGl2:parameters:blockIfNotDefined".to_string(), serde_json::json!(v));
-        m.insert("webGl:shaderPrecisionFormats:blockIfNotDefined".to_string(), serde_json::json!(v));
-        m.insert("webGl2:shaderPrecisionFormats:blockIfNotDefined".to_string(), serde_json::json!(v));
+        m.insert(
+            "webGl:parameters:blockIfNotDefined".to_string(),
+            serde_json::json!(v),
+        );
+        m.insert(
+            "webGl2:parameters:blockIfNotDefined".to_string(),
+            serde_json::json!(v),
+        );
+        m.insert(
+            "webGl:shaderPrecisionFormats:blockIfNotDefined".to_string(),
+            serde_json::json!(v),
+        );
+        m.insert(
+            "webGl2:shaderPrecisionFormats:blockIfNotDefined".to_string(),
+            serde_json::json!(v),
+        );
     }
 
     // ── Canvas & Audio Seeds ─────────────────────────────────────────
@@ -315,17 +328,25 @@ fn build_camou_config(fp: &FingerprintConfig, target_ff_version: Option<&str>) -
     // ── WebRTC ───────────────────────────────────────────────────────
     set_str!("webrtc:ipv4", fp.webrtc_ipv4);
     set_str!("webrtc:ipv6", fp.webrtc_ipv6);
-    set_str!("webrtc:localipv4", fp.webrtc_local_ipv4);
-    set_str!("webrtc:localipv6", fp.webrtc_local_ipv6);
+    set_str!("webrtc:ipv4", fp.webrtc_ipv4);
+    set_str!("webrtc:ipv6", fp.webrtc_ipv6);
+    // webrtc_local_ipv4/ipv6 are deliberately dropped: `webrtc:localipv4` and
+    // `webrtc:localipv6` are not Camoufox properties, so the binary ignored them.
+    // WebRTC is disabled at the profile level whenever a proxy is configured,
+    // which is the only reliable way to stop ICE leaking the host IP.
 
     // ── HTTP Headers ────────────────────────────────────────────────
-    let effective_header_ua = fp.header_user_agent.as_ref().map(|ua| {
-        if let Some(ver) = target_ff_version {
-            harmonize_firefox_user_agent(ua, ver)
-        } else {
-            ua.clone()
-        }
-    }).or_else(|| effective_ua.clone());
+    let effective_header_ua = fp
+        .header_user_agent
+        .as_ref()
+        .map(|ua| {
+            if let Some(ver) = target_ff_version {
+                harmonize_firefox_user_agent(ua, ver)
+            } else {
+                ua.clone()
+            }
+        })
+        .or_else(|| effective_ua.clone());
     set_str!("headers.User-Agent", effective_header_ua);
     set_str!("headers.Accept-Language", fp.header_accept_language);
     set_str!("headers.Accept-Encoding", fp.header_accept_encoding);
@@ -337,6 +358,11 @@ fn build_camou_config(fp: &FingerprintConfig, target_ff_version: Option<&str>) -
     set_f64!("battery:level", fp.battery_level);
 
     // ── Media Devices ───────────────────────────────────────────────
+    // mediaDevices:enabled defaults to false, and the three counts below are
+    // inert without it. Emit the gate whenever any count is set.
+    if fp.media_micros.is_some() || fp.media_webcams.is_some() || fp.media_speakers.is_some() {
+        m.insert("mediaDevices:enabled".to_string(), serde_json::json!(true));
+    }
     set_u32!("mediaDevices:micros", fp.media_micros);
     set_u32!("mediaDevices:webcams", fp.media_webcams);
     set_u32!("mediaDevices:speakers", fp.media_speakers);
@@ -463,6 +489,31 @@ fn ensure_user_js(
     }
 
     // Proxy settings — prefer structured proxy_config, fall back to legacy proxy string
+    let has_proxy = if let Some(pc) = proxy_config {
+        let host = pc.host.as_deref().unwrap_or("");
+        let port = pc.port.unwrap_or(0);
+        !host.is_empty() && port > 0 && pc.proxy_type.is_some()
+    } else {
+        proxy.is_some()
+    };
+
+    if has_proxy {
+        // Camoufox leaves WebRTC on by default, and ICE candidate gathering runs
+        // directly against the host's network interfaces — a proxy does not
+        // intercept it. Without this the real host IP is handed to every site,
+        // which defeats the proxy outright and links every instance to this host.
+        user_js_content.push_str("user_pref(\"media.peerconnection.enabled\", false);\n");
+
+        // Firefox proxies localhost by default (allow_hijacking_localhost=true),
+        // so any locally served page fails with ERR_CONNECTION_REFUSED on a
+        // proxied instance. Bypass the proxy for loopback.
+        user_js_content
+            .push_str("user_pref(\"network.proxy.allow_hijacking_localhost\", false);\n");
+        user_js_content.push_str(
+            "user_pref(\"network.proxy.no_proxies_on\", \"localhost, 127.0.0.1, ::1\");\n",
+        );
+    }
+
     if let Some(pc) = proxy_config {
         if let Some(ref ptype) = pc.proxy_type {
             let host = pc.host.as_deref().unwrap_or("");
@@ -649,7 +700,7 @@ pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, Stri
     }
 
     // Sort by creation time, newest first
-    instances.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    instances.sort_by_key(|i| std::cmp::Reverse(i.created_at));
     Ok(instances)
 }
 
@@ -717,7 +768,11 @@ pub async fn delete_instance(app: &AppHandle, id: String) -> Result<(), String> 
     Ok(())
 }
 
-pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<String>) -> Result<u32, String> {
+pub async fn launch_instance(
+    app: &AppHandle,
+    id: String,
+    startup_url: Option<String>,
+) -> Result<u32, String> {
     // Check if already running
     if process_manager::is_running(&id) {
         return Err("Instance is already running".to_string());
@@ -747,20 +802,27 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
     // Proxy rotation
     let effective_proxy;
     let effective_proxy_config;
-    if let Some(ref pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
+    if let Some(pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
         if !pool.is_empty() {
-            let mode = config.as_ref().and_then(|c| c.proxy_rotation_mode.as_deref()).unwrap_or("sequential");
+            let mode = config
+                .as_ref()
+                .and_then(|c| c.proxy_rotation_mode.as_deref())
+                .unwrap_or("sequential");
             let idx = if mode == "random" {
                 use rand::Rng;
                 rand::thread_rng().gen_range(0..pool.len())
             } else {
-                let current = config.as_ref().and_then(|c| c.proxy_rotation_index).unwrap_or(0);
+                let current = config
+                    .as_ref()
+                    .and_then(|c| c.proxy_rotation_index)
+                    .unwrap_or(0);
                 let idx = current % pool.len();
                 // Update index for next launch
                 if let Ok(contents) = fs::read_to_string(&config_path) {
                     if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
                         cfg.proxy_rotation_index = Some(idx + 1);
-                        let _ = fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
+                        let _ =
+                            fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
                     }
                 }
                 idx
@@ -783,26 +845,39 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
     }
 
     // Update user.js on every launch to ensure preferences are applied
-    let _ = ensure_user_js(&instance_dir, &effective_proxy, &effective_proxy_config, persist_data);
+    let _ = ensure_user_js(
+        &instance_dir,
+        &effective_proxy,
+        &effective_proxy_config,
+        persist_data,
+    );
 
     let bin_path = crate::camoufox::get_camoufox_binary(app)
         .await
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
     // Fingerprint rotation
-    let effective_fp = if let Some(ref pool) = config.as_ref().and_then(|c| c.fingerprint_pool.as_ref()) {
+    let effective_fp = if let Some(pool) = config.as_ref().and_then(|c| c.fingerprint_pool.as_ref())
+    {
         if !pool.is_empty() {
-            let mode = config.as_ref().and_then(|c| c.fingerprint_rotation_mode.as_deref()).unwrap_or("sequential");
+            let mode = config
+                .as_ref()
+                .and_then(|c| c.fingerprint_rotation_mode.as_deref())
+                .unwrap_or("sequential");
             let idx = if mode == "random" {
                 use rand::Rng;
                 rand::thread_rng().gen_range(0..pool.len())
             } else {
-                let current = config.as_ref().and_then(|c| c.fingerprint_rotation_index).unwrap_or(0);
+                let current = config
+                    .as_ref()
+                    .and_then(|c| c.fingerprint_rotation_index)
+                    .unwrap_or(0);
                 let idx = current % pool.len();
                 if let Ok(contents) = fs::read_to_string(&config_path) {
                     if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
                         cfg.fingerprint_rotation_index = Some(idx + 1);
-                        let _ = fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
+                        let _ =
+                            fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
                     }
                 }
                 idx
@@ -820,9 +895,13 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
     let target_ff_ver = extract_major_version(&engine_ver_str).unwrap_or("156");
 
     // Ensure proxy auth extension if credentials exist
-    let effective_proxy = if let Some(ref pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
+    let effective_proxy = if let Some(pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
         if !pool.is_empty() {
-            let idx = config.as_ref().and_then(|c| c.proxy_rotation_index).unwrap_or(0) % pool.len();
+            let idx = config
+                .as_ref()
+                .and_then(|c| c.proxy_rotation_index)
+                .unwrap_or(0)
+                % pool.len();
             Some(&pool[idx])
         } else {
             config.as_ref().and_then(|c| c.proxy_config.as_ref())
@@ -831,16 +910,25 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
         config.as_ref().and_then(|c| c.proxy_config.as_ref())
     };
 
-    let proxy_ext = ensure_proxy_auth_extension(&instance_dir, &effective_proxy.cloned()).ok().flatten();
+    let proxy_ext = ensure_proxy_auth_extension(&instance_dir, &effective_proxy.cloned())
+        .ok()
+        .flatten();
 
     // Build the CAMOU_CONFIG JSON from fingerprint settings
     let mut camou_val: serde_json::Value = if let Some(fp) = effective_fp {
         if fp.auto_fingerprint == Some(true) {
+            // Geo is resolved through the instance's own proxy so timezone,
+            // locale and position agree with the egress IP instead of this host.
+            // Seeds come from the instance id so the identity is stable across
+            // launches rather than redrawn every time.
+            let geo = crate::geo::for_instance(app, &id, effective_proxy_config.as_ref()).await;
             crate::auto_fingerprint::generate_auto_config(
                 fp.auto_change_window_size.unwrap_or(true),
                 fp.outer_width,
                 fp.outer_height,
                 Some(target_ff_ver),
+                crate::geo::stable_seeds(&id),
+                &geo,
             )
         } else {
             build_camou_config(fp, Some(target_ff_ver))
@@ -852,7 +940,9 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
     if let Some(ext_path) = proxy_ext {
         let ext_str = ext_path.to_string_lossy().to_string();
         if let Some(obj) = camou_val.as_object_mut() {
-            let addons_arr = obj.entry("addons").or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            let addons_arr = obj
+                .entry("addons")
+                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
             if let Some(arr) = addons_arr.as_array_mut() {
                 arr.push(serde_json::Value::String(ext_str));
             }
@@ -868,7 +958,8 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
     if let Some(ref url) = startup_url {
         cmd.arg(url);
     }
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to launch instance: {}", e))?;
 
     let pid = child.id();
@@ -1054,7 +1145,10 @@ pub async fn rename_instance(app: &AppHandle, id: String, new_name: String) -> R
         return Err("Cannot rename a running instance".to_string());
     }
     let instances = list_instances(app).await?;
-    if instances.iter().any(|i| i.id != id && i.name.eq_ignore_ascii_case(&new_name)) {
+    if instances
+        .iter()
+        .any(|i| i.id != id && i.name.eq_ignore_ascii_case(&new_name))
+    {
         return Err("An instance with this name already exists".to_string());
     }
     let profiles_dir = get_profiles_dir(app).await;
@@ -1071,7 +1165,11 @@ pub async fn rename_instance(app: &AppHandle, id: String, new_name: String) -> R
     Err("Failed to rename instance".to_string())
 }
 
-pub async fn update_instance_tags(app: &AppHandle, id: String, tags: Vec<String>) -> Result<(), String> {
+pub async fn update_instance_tags(
+    app: &AppHandle,
+    id: String,
+    tags: Vec<String>,
+) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
     let config_path = instance_dir.join("anon_config.json");
@@ -1086,7 +1184,11 @@ pub async fn update_instance_tags(app: &AppHandle, id: String, tags: Vec<String>
     Err("Failed to update instance tags".to_string())
 }
 
-pub async fn update_instance_notes(app: &AppHandle, id: String, notes: Option<String>) -> Result<(), String> {
+pub async fn update_instance_notes(
+    app: &AppHandle,
+    id: String,
+    notes: Option<String>,
+) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
     let config_path = instance_dir.join("anon_config.json");
@@ -1123,26 +1225,30 @@ pub async fn export_all_instances(app: &AppHandle) -> Result<String, String> {
     serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
 }
 
-pub async fn import_instances(app: &AppHandle, json: String) -> Result<Vec<InstanceConfig>, String> {
+pub async fn import_instances(
+    app: &AppHandle,
+    json: String,
+) -> Result<Vec<InstanceConfig>, String> {
     let existing = list_instances(app).await?;
     let profiles_dir = get_profiles_dir(app).await;
 
     // Try parsing as array of instances or as export bundle
-    let configs_to_import: Vec<InstanceConfig> = if let Ok(bundle) = serde_json::from_str::<serde_json::Value>(&json) {
-        if let Some(arr) = bundle.get("instances").and_then(|v| v.as_array()) {
-            arr.iter()
-                .filter_map(|v| serde_json::from_value::<InstanceConfig>(v.clone()).ok())
-                .collect()
-        } else if let Ok(single) = serde_json::from_str::<InstanceConfig>(&json) {
-            vec![single]
-        } else if let Ok(arr) = serde_json::from_str::<Vec<InstanceConfig>>(&json) {
-            arr
+    let configs_to_import: Vec<InstanceConfig> =
+        if let Ok(bundle) = serde_json::from_str::<serde_json::Value>(&json) {
+            if let Some(arr) = bundle.get("instances").and_then(|v| v.as_array()) {
+                arr.iter()
+                    .filter_map(|v| serde_json::from_value::<InstanceConfig>(v.clone()).ok())
+                    .collect()
+            } else if let Ok(single) = serde_json::from_str::<InstanceConfig>(&json) {
+                vec![single]
+            } else if let Ok(arr) = serde_json::from_str::<Vec<InstanceConfig>>(&json) {
+                arr
+            } else {
+                return Err("Invalid import format".to_string());
+            }
         } else {
-            return Err("Invalid import format".to_string());
-        }
-    } else {
-        return Err("Invalid JSON".to_string());
-    };
+            return Err("Invalid JSON".to_string());
+        };
 
     let mut imported = Vec::new();
     for config in configs_to_import {
@@ -1151,10 +1257,23 @@ pub async fn import_instances(app: &AppHandle, json: String) -> Result<Vec<Insta
 
         // Handle name conflicts
         let mut counter = 0;
-        while existing.iter().any(|i| i.name.eq_ignore_ascii_case(&new_name))
-            || imported.iter().any(|i: &InstanceConfig| i.name.eq_ignore_ascii_case(&new_name)) {
+        while existing
+            .iter()
+            .any(|i| i.name.eq_ignore_ascii_case(&new_name))
+            || imported
+                .iter()
+                .any(|i: &InstanceConfig| i.name.eq_ignore_ascii_case(&new_name))
+        {
             counter += 1;
-            new_name = format!("{} (imported{})", config.name, if counter > 1 { format!(" {}", counter) } else { String::new() });
+            new_name = format!(
+                "{} (imported{})",
+                config.name,
+                if counter > 1 {
+                    format!(" {}", counter)
+                } else {
+                    String::new()
+                }
+            );
         }
 
         let new_config = InstanceConfig {
@@ -1183,13 +1302,23 @@ pub async fn import_instances(app: &AppHandle, json: String) -> Result<Vec<Insta
         let config_path = instance_dir.join("anon_config.json");
         let config_json = serde_json::to_string_pretty(&new_config).unwrap();
         fs::write(config_path, config_json).map_err(|e| e.to_string())?;
-        let _ = ensure_user_js(&instance_dir, &new_config.proxy, &new_config.proxy_config, new_config.persist_data);
+        let _ = ensure_user_js(
+            &instance_dir,
+            &new_config.proxy,
+            &new_config.proxy_config,
+            new_config.persist_data,
+        );
         imported.push(new_config);
     }
     Ok(imported)
 }
 
-pub async fn update_proxy_pool(app: &AppHandle, id: String, pool: Vec<ProxyConfig>, mode: Option<String>) -> Result<(), String> {
+pub async fn update_proxy_pool(
+    app: &AppHandle,
+    id: String,
+    pool: Vec<ProxyConfig>,
+    mode: Option<String>,
+) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let config_path = profiles_dir.join(&id).join("anon_config.json");
     if let Ok(contents) = fs::read_to_string(&config_path) {
@@ -1204,7 +1333,12 @@ pub async fn update_proxy_pool(app: &AppHandle, id: String, pool: Vec<ProxyConfi
     Err("Failed to update proxy pool".to_string())
 }
 
-pub async fn update_fingerprint_pool(app: &AppHandle, id: String, pool: Vec<FingerprintConfig>, mode: Option<String>) -> Result<(), String> {
+pub async fn update_fingerprint_pool(
+    app: &AppHandle,
+    id: String,
+    pool: Vec<FingerprintConfig>,
+    mode: Option<String>,
+) -> Result<(), String> {
     let profiles_dir = get_profiles_dir(app).await;
     let config_path = profiles_dir.join(&id).join("anon_config.json");
     if let Ok(contents) = fs::read_to_string(&config_path) {

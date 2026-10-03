@@ -210,11 +210,16 @@ fn generate_random_voice_subset(target_os: &str) -> Vec<String> {
 // ── Main generation function ────────────────────────────────────────────────
 
 /// Build a complete CAMOU_CONFIG JSON from a random preset.
+///
+/// `seeds` and `geo` come from the caller because both must be stable per
+/// instance rather than redrawn per launch. See `crate::geo`.
 pub fn generate_auto_config(
     change_window_size: bool,
     default_outer_width: Option<u32>,
     default_outer_height: Option<u32>,
     target_ff_version: Option<&str>,
+    seeds: crate::geo::Seeds,
+    geo: &crate::geo::GeoContext,
 ) -> serde_json::Value {
     let presets = fingerprint_presets::get_presets();
     let mut rng = rand::thread_rng();
@@ -417,19 +422,38 @@ pub fn generate_auto_config(
         }
     }
 
-    // ── Random seeds (unique per launch, 1 to u32::MAX) ─────────────────
+    // ── Geo & Locale ────────────────────────────────────────────────────────
+    // Bound to the instance's proxy, not to the host. Omitting any of these
+    // does not make them unique — the binary falls through to stock Firefox, so
+    // every instance would report this machine's real timezone, locale and
+    // position, which both correlates your instances and contradicts the proxy.
+    //
+    // navigator.language / navigator.languages are deliberately NOT set: camoufox
+    // derives them from locale:language / locale:region, which keeps them
+    // consistent by construction. headers.User-Agent is likewise left to fall
+    // back to navigator.userAgent.
+    config.insert("timezone".into(), serde_json::json!(geo.timezone));
+    config.insert("locale:language".into(), serde_json::json!(geo.language));
+    config.insert("locale:region".into(), serde_json::json!(geo.region));
+    config.insert("locale:all".into(), serde_json::json!(geo.locale_all));
+    config.insert(
+        "headers.Accept-Language".into(),
+        serde_json::json!(geo.accept_language),
+    );
+    if let Some((lat, lon)) = geo.coordinates {
+        // Accuracy is derived from coordinate precision when unset.
+        config.insert("geolocation:latitude".into(), serde_json::json!(lat));
+        config.insert("geolocation:longitude".into(), serde_json::json!(lon));
+    }
+
+    // ── Stable seeds ─────────────────────────────────────────────────────────
+    // Per instance, not per launch — see crate::geo::stable_seeds.
     config.insert(
         "fonts:spacing_seed".into(),
-        serde_json::json!(rng.gen_range(1u32..=u32::MAX)),
+        serde_json::json!(seeds.fonts_spacing),
     );
-    config.insert(
-        "audio:seed".into(),
-        serde_json::json!(rng.gen_range(1u32..=u32::MAX)),
-    );
-    config.insert(
-        "canvas:seed".into(),
-        serde_json::json!(rng.gen_range(1u32..=u32::MAX)),
-    );
+    config.insert("audio:seed".into(), serde_json::json!(seeds.audio));
+    config.insert("canvas:seed".into(), serde_json::json!(seeds.canvas));
 
     // ── Random font subset ──────────────────────────────────────────────
     let fonts = generate_random_font_subset(target_os);
@@ -475,4 +499,192 @@ pub fn generate_auto_config(
     }
 
     serde_json::Value::Object(config)
+}
+
+#[cfg(test)]
+mod audit {
+    use super::*;
+    use crate::geo::{resolve, stable_seeds};
+    use std::collections::{BTreeMap, HashSet};
+
+    /// Proxy countries the sample is drawn across, so the entropy being measured
+    /// is the entropy real instances actually get.
+    const COUNTRIES: &[&str] = &[
+        "United States",
+        "Germany",
+        "Japan",
+        "Brazil",
+        "United Kingdom",
+        "India",
+        "Netherlands",
+        "Australia",
+        "Canada",
+        "France",
+        "Singapore",
+        "Mexico",
+    ];
+
+    /// Must never be absent from a generated config. Camoufox's binary returns
+    /// `std::nullopt` for a missing key and falls through to stock Firefox, so an
+    /// absent key does not mean "neutral" — it means the real host value is
+    /// reported, and every instance on this machine correlates on it.
+    const REQUIRED: &[&str] = &[
+        "navigator.userAgent",
+        "navigator.platform",
+        "navigator.oscpu",
+        "timezone",
+        "locale:language",
+        "locale:region",
+        "locale:all",
+        "headers.User-Agent",
+        "headers.Accept-Language",
+        "geolocation:latitude",
+        "geolocation:longitude",
+        "screen.width",
+        "screen.height",
+        "webGl:vendor",
+        "webGl:renderer",
+        "fonts",
+        "canvas:seed",
+        "audio:seed",
+        "fonts:spacing_seed",
+    ];
+
+    /// Must take more than one value across the pool. A single distinct value is
+    /// the "every instance is the same user" failure.
+    const MUST_VARY: &[&str] = &[
+        "navigator.userAgent",
+        "navigator.platform",
+        "timezone",
+        "locale:region",
+        "geolocation:latitude",
+        "canvas:seed",
+        "audio:seed",
+        "fonts:spacing_seed",
+        "fonts",
+    ];
+
+    const SAMPLES: usize = 300;
+
+    fn sample() -> BTreeMap<String, HashSet<String>> {
+        let mut out: BTreeMap<String, HashSet<String>> = BTreeMap::new();
+        for i in 0..SAMPLES {
+            let id = format!("instance-{i:04}");
+            let country = COUNTRIES[i % COUNTRIES.len()];
+            let cfg = generate_auto_config(
+                false,
+                None,
+                None,
+                Some("156"),
+                stable_seeds(&id),
+                &resolve(country, &id),
+            );
+            collect("", &cfg, &mut out);
+        }
+        out
+    }
+
+    fn collect(prefix: &str, v: &serde_json::Value, out: &mut BTreeMap<String, HashSet<String>>) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, val) in map {
+                    let path = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
+                    collect(&path, val, out);
+                }
+            }
+            serde_json::Value::String(s) => {
+                out.entry(prefix.to_string()).or_default().insert(s.clone());
+            }
+            other => {
+                out.entry(prefix.to_string())
+                    .or_default()
+                    .insert(other.to_string());
+            }
+        }
+    }
+
+    /// Generate a pool of configs and report the two things that matter:
+    /// which keys are identical across the whole pool (pinned), and which
+    /// required keys never appear at all (host leak).
+    #[test]
+    fn audit_identity_entropy() {
+        let seen = sample();
+
+        let missing: Vec<&str> = REQUIRED
+            .iter()
+            .copied()
+            .filter(|k| !seen.contains_key(*k))
+            .collect();
+
+        let mut pinned: Vec<(&str, usize)> = seen
+            .iter()
+            .filter(|(k, v)| v.len() == 1 && MUST_VARY.contains(&k.as_str()))
+            .map(|(k, v)| (k.as_str(), v.len()))
+            .collect();
+        pinned.sort();
+
+        println!("\n=== {SAMPLES} generated identities ===");
+        println!("keys emitted: {}", seen.len());
+        println!("\nrequired but ABSENT (host value leaks through):");
+        for k in &missing {
+            println!("  {k}");
+        }
+        if missing.is_empty() {
+            println!("  (none)");
+        }
+        println!("\nmust-vary but PINNED (one value across all {SAMPLES}):");
+        for (k, _) in &pinned {
+            println!("  {k}");
+        }
+        if pinned.is_empty() {
+            println!("  (none)");
+        }
+        println!("\nspread:");
+        for k in MUST_VARY {
+            let n = seen.get(*k).map(|s| s.len()).unwrap_or(0);
+            println!("  {n:>4}  {k}");
+        }
+
+        assert!(
+            missing.is_empty(),
+            "these keys are absent, so the browser reports the real host value: {missing:?}"
+        );
+        assert!(
+            pinned.is_empty(),
+            "these keys are identical across every instance: {pinned:?}"
+        );
+    }
+
+    /// The other half of uniqueness: an instance must be recognisably ITSELF on
+    /// every relaunch. Churning seeds next to a frozen user agent is a stronger
+    /// tell than a fixed value.
+    #[test]
+    fn audit_seeds_are_stable_across_launches() {
+        let id = "aaaaaaaa-1111-4111-8111-111111111111";
+        let seeds = stable_seeds(id);
+        let geo = resolve("Germany", id);
+
+        let mut seen = HashSet::new();
+        for _ in 0..25 {
+            let cfg = generate_auto_config(true, None, None, Some("156"), seeds, &geo);
+            let obj = cfg.as_object().unwrap();
+            seen.insert((
+                obj["canvas:seed"].clone(),
+                obj["audio:seed"].clone(),
+                obj["fonts:spacing_seed"].clone(),
+                obj["timezone"].clone(),
+                obj["locale:region"].clone(),
+            ));
+        }
+
+        assert_eq!(
+            seen.len(),
+            1,
+            "identity fields churned across launches of one instance: {seen:?}"
+        );
+    }
 }

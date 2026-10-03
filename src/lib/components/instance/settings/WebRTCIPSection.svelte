@@ -8,17 +8,13 @@
 </script>
 
 <SettingsSection title="WEBRTC IP"
-  hint="{[
-    fp.webrtc_ipv4,
-    fp.webrtc_ipv6,
-    fp.webrtc_local_ipv4,
-    fp.webrtc_local_ipv6,
-  ].filter((v) => v != null).length} SET"
+  hint="{[fp.webrtc_ipv4, fp.webrtc_ipv6].filter((v) => v != null).length} SET"
   bind:open
 >
   <span class="field-hint"
-    >OVERRIDE WEBRTC IP DISCLOSURE — LEAVE BLANK TO USE PROXY IP
-    AUTOMATICALLY</span
+    >WEBRTC IS DISABLED WHENEVER A PROXY IS CONFIGURED — ICE CANDIDATES WOULD
+    OTHERWISE REVEAL THIS HOST'S REAL IP. THESE FIELDS ONLY APPLY WHEN NO PROXY
+    IS SET.</span
   >
   <div class="field-row">
     <div class="field half" data-tooltip="The public IPv4 address disclosed via WebRTC.">
@@ -35,26 +31,6 @@
         type="text"
         value={fp.webrtc_ipv6 ?? ""}
         on:input={(e) => fp = setStr(fp, "webrtc_ipv6", e)}
-        placeholder="AUTO"
-        class="input-field mono"
-      />
-    </div>
-  </div>
-  <div class="field-row">
-    <div class="field half" data-tooltip="The local IPv4 address disclosed via WebRTC.">
-      <label for="fp-local-ipv4">LOCAL IPV4</label><input id="fp-local-ipv4"
-        type="text"
-        value={fp.webrtc_local_ipv4 ?? ""}
-        on:input={(e) => fp = setStr(fp, "webrtc_local_ipv4", e)}
-        placeholder="AUTO"
-        class="input-field mono"
-      />
-    </div>
-    <div class="field half" data-tooltip="The local IPv6 address disclosed via WebRTC.">
-      <label for="fp-local-ipv6">LOCAL IPV6</label><input id="fp-local-ipv6"
-        type="text"
-        value={fp.webrtc_local_ipv6 ?? ""}
-        on:input={(e) => fp = setStr(fp, "webrtc_local_ipv6", e)}
         placeholder="AUTO"
         class="input-field mono"
       />

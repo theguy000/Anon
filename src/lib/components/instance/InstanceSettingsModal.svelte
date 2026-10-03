@@ -66,28 +66,41 @@
   const accentGreen = '#10b981';
   const accentGreenBg = 'rgba(16, 185, 129, 0.05)';
 
-  // Initialize on open — IMPORTANT: do NOT read `fp` inside this block,
-  // or any `fp = ...` assignment will trigger re-initialization and reset values.
-  $: if (show && instance) {
-    fp = instance.fingerprint ? { ...instance.fingerprint } : {};
-    proxyConfig = instance.proxy_config ? { ...instance.proxy_config } : {};
-    notes = instance.notes ?? '';
-    instanceTags = instance.tags ? [...instance.tags] : [];
-    saving = false;
-    activeTab = 'fingerprint';
-    selectedScreenPreset = "";
-    selectedWebglPreset = "";
-    selectedLocale = "";
-    customWebgl = !!instance.fingerprint?.webgl_renderer;
-    globalCategory = instance.fingerprint?.global_category ?? "";
-    globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
-    autoMode = instance.fingerprint?.auto_fingerprint === true;
-    autoChangeWindowSize = instance.fingerprint?.auto_change_window_size !== false;
-    autoWindowPresetIndex = WINDOW_PRESETS.findIndex(
-      (p) =>
-        p.w === instance.fingerprint?.outer_width &&
-        p.h === instance.fingerprint?.outer_height
-    );
+  // Initialize once per open. Keyed on the open transition rather than on
+  // `instance` itself: every store refresh hands this component a NEW instance
+  // object, so re-initializing on identity wiped in-progress edits mid-save.
+  // handleSave awaits updateInstanceNotes/Tags, both of which call
+  // loadInstances(), so the old version reset autoMode to its stored value
+  // before the fingerprint payload was assembled — silently saving nothing.
+  // IMPORTANT: do NOT read `fp` inside this block, or any `fp = ...`
+  // assignment will trigger re-initialization and reset values.
+  let lastInitKey = "";
+  $: {
+    const key = show && instance ? `${instance.id}|open` : "";
+    if (key !== lastInitKey) {
+      lastInitKey = key;
+      if (key) {
+        fp = instance.fingerprint ? { ...instance.fingerprint } : {};
+        proxyConfig = instance.proxy_config ? { ...instance.proxy_config } : {};
+        notes = instance.notes ?? '';
+        instanceTags = instance.tags ? [...instance.tags] : [];
+        saving = false;
+        activeTab = 'fingerprint';
+        selectedScreenPreset = "";
+        selectedWebglPreset = "";
+        selectedLocale = "";
+        customWebgl = !!instance.fingerprint?.webgl_renderer;
+        globalCategory = instance.fingerprint?.global_category ?? "";
+        globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
+        autoMode = instance.fingerprint?.auto_fingerprint === true;
+        autoChangeWindowSize = instance.fingerprint?.auto_change_window_size !== false;
+        autoWindowPresetIndex = WINDOW_PRESETS.findIndex(
+          (p) =>
+            p.w === instance.fingerprint?.outer_width &&
+            p.h === instance.fingerprint?.outer_height
+        );
+      }
+    }
   }
 
   // ── Save / Reset ───────────────────────────────────────────────────────────
@@ -294,7 +307,7 @@
         </div>
         {#if autoMode}
           <p style="margin: 12px 0 0; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 0.03em; line-height: 1.5;">
-            Camoufox's built-in browserforge will automatically generate a unique fingerprint on each launch. All fields — navigator, screen, WebGL, fonts, audio, canvas, and more — are handled automatically.
+            Draws navigator, screen, WebGL, fonts and voices from a real captured browser, and keeps canvas, audio and font-spacing hashes stable for the life of this instance. Timezone, locale and position are resolved through this instance's proxy, so they agree with its exit IP rather than this machine.
           </p>
           <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
             <div style="display: flex; flex-direction: column; gap: 4px;">

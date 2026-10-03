@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::instances::ProxyConfig;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -20,8 +20,14 @@ struct IpApiResponse {
     city: Option<String>,
 }
 
-pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, String> {
-    let proxy_type = proxy_config.proxy_type.as_deref().ok_or("No proxy type specified")?;
+/// Canonical proxy URL, including credentials when present.
+/// Also used as the geo-lookup cache key, so it must include the credentials:
+/// two proxies on the same host can egress from different countries.
+pub fn proxy_url(proxy_config: &ProxyConfig) -> Result<String, String> {
+    let proxy_type = proxy_config
+        .proxy_type
+        .as_deref()
+        .ok_or("No proxy type specified")?;
     let host = proxy_config.host.as_deref().ok_or("No host specified")?;
     let port = proxy_config.port.ok_or("No port specified")?;
 
@@ -29,25 +35,38 @@ pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, St
         return Err("Invalid proxy configuration".to_string());
     }
 
-    let proxy_url = match (proxy_config.username.as_deref(), proxy_config.password.as_deref()) {
-        (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
-            format!("{}://{}:{}@{}:{}", proxy_type, user, pass, host, port)
-        }
-        (Some(user), _) if !user.is_empty() => {
-            format!("{}://{}@{}:{}", proxy_type, user, host, port)
-        }
-        _ => format!("{}://{}:{}", proxy_type, host, port),
+    Ok(
+        match (
+            proxy_config.username.as_deref(),
+            proxy_config.password.as_deref(),
+        ) {
+            (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
+                format!("{}://{}:{}@{}:{}", proxy_type, user, pass, host, port)
+            }
+            (Some(user), _) if !user.is_empty() => {
+                format!("{}://{}@{}:{}", proxy_type, user, host, port)
+            }
+            _ => format!("{}://{}:{}", proxy_type, host, port),
+        },
+    )
+}
+
+pub fn reqwest_proxy(proxy_config: &ProxyConfig) -> Result<reqwest::Proxy, String> {
+    let proxy_url = proxy_url(proxy_config)?;
+    let proxy_type = proxy_config.proxy_type.as_deref().unwrap_or_default();
+
+    // reqwest speaks socks5 for both socks4 and socks5
+    let url = match proxy_type {
+        "http" | "socks5" => proxy_url,
+        "socks4" => proxy_url.replacen("socks4://", "socks5://", 1),
+        other => return Err(format!("Unsupported proxy type: {}", other)),
     };
 
-    // Map proxy types for reqwest
-    let reqwest_proxy_url = match proxy_type {
-        "http" => proxy_url.clone(),
-        "socks4" => proxy_url.replace("socks4://", "socks5://"), // reqwest uses socks5 for both
-        "socks5" => proxy_url.clone(),
-        _ => return Err(format!("Unsupported proxy type: {}", proxy_type)),
-    };
+    reqwest::Proxy::all(&url).map_err(|e| format!("Invalid proxy URL: {}", e))
+}
 
-    let proxy = reqwest::Proxy::all(&reqwest_proxy_url).map_err(|e| format!("Invalid proxy URL: {}", e))?;
+pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, String> {
+    let proxy = reqwest_proxy(&proxy_config)?;
 
     let client = reqwest::Client::builder()
         .proxy(proxy)
@@ -74,40 +93,34 @@ pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, St
             }
 
             match response.json::<IpApiResponse>().await {
-                Ok(data) => {
-                    Ok(ProxyTestResult {
-                        success: true,
-                        ip: data.ip,
-                        country: data.country_name,
-                        city: data.city,
-                        latency_ms: Some(latency),
-                        dns_leak: Some(false),
-                        error: None,
-                    })
-                }
-                Err(_) => {
-                    Ok(ProxyTestResult {
-                        success: true,
-                        ip: None,
-                        country: None,
-                        city: None,
-                        latency_ms: Some(latency),
-                        dns_leak: None,
-                        error: Some("Connected but failed to parse IP info".to_string()),
-                    })
-                }
+                Ok(data) => Ok(ProxyTestResult {
+                    success: true,
+                    ip: data.ip,
+                    country: data.country_name,
+                    city: data.city,
+                    latency_ms: Some(latency),
+                    dns_leak: Some(false),
+                    error: None,
+                }),
+                Err(_) => Ok(ProxyTestResult {
+                    success: true,
+                    ip: None,
+                    country: None,
+                    city: None,
+                    latency_ms: Some(latency),
+                    dns_leak: None,
+                    error: Some("Connected but failed to parse IP info".to_string()),
+                }),
             }
         }
-        Err(e) => {
-            Ok(ProxyTestResult {
-                success: false,
-                ip: None,
-                country: None,
-                city: None,
-                latency_ms: None,
-                dns_leak: None,
-                error: Some(format!("Connection failed: {}", e)),
-            })
-        }
+        Err(e) => Ok(ProxyTestResult {
+            success: false,
+            ip: None,
+            country: None,
+            city: None,
+            latency_ms: None,
+            dns_leak: None,
+            error: Some(format!("Connection failed: {}", e)),
+        }),
     }
 }

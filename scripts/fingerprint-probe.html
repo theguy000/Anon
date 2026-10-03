@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fingerprint probe</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0b0d10; color:#e6e6e6; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; margin:0; padding:16px; }
+  h1 { font-size:13px; letter-spacing:.08em; margin:0 0 4px; color:#fff; }
+  p.sub { margin:0 0 14px; color:#8b949e; font-size:11px; }
+  table { border-collapse:collapse; width:100%; max-width:1100px; }
+  td { padding:3px 8px; border-bottom:1px solid #1c2128; vertical-align:top; }
+  td.k { color:#8b949e; width:230px; white-space:nowrap; }
+  td.v { color:#e6e6e6; word-break:break-all; }
+  .bad { color:#f85149; font-weight:700; }
+  .good { color:#3fb950; }
+  .warn { color:#d29922; }
+  button { background:#1f6feb; color:#fff; border:0; padding:7px 14px; border-radius:5px; cursor:pointer; font:inherit; margin-right:8px; }
+  textarea { width:100%; max-width:1100px; height:90px; margin-top:14px; background:#0d1117; color:#7ee787; border:1px solid #30363d; border-radius:5px; font:11px ui-monospace,monospace; padding:8px; }
+  h2 { font-size:11px; letter-spacing:.08em; color:#58a6ff; margin:20px 0 6px; }
+</style>
+</head>
+<body>
+<h1>FINGERPRINT PROBE</h1>
+<p class="sub">Read-only. Compares what this browser actually reports against what the app put in CAMOU_CONFIG.</p>
+<div id="out"></div>
+<button onclick="copySig()">COPY SIGNATURE</button>
+<textarea id="sig" readonly></textarea>
+
+<script>
+const R = {};
+const row = (k, v, cls) => `<tr><td class="k">${k}</td><td class="v ${cls||''}">${v}</td></tr>`;
+const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const sec = t => `<h2>${t}</h2>`;
+let html = '';
+
+// ── Navigator ──────────────────────────────────────────────────────────────
+html += sec('NAVIGATOR');
+html += row('userAgent', esc(navigator.userAgent));
+html += row('platform', esc(navigator.platform));
+html += row('oscpu', esc(navigator.oscpu));
+html += row('appVersion', esc(navigator.appVersion));
+html += row('product / buildID', esc(navigator.product) + ' / ' + esc(navigator.buildID));
+html += row('language', esc(navigator.language));
+html += row('languages', esc(JSON.stringify(navigator.languages)));
+html += row('hardwareConcurrency', navigator.hardwareConcurrency);
+html += row('maxTouchPoints', navigator.maxTouchPoints);
+html += row('webdriver', navigator.webdriver, navigator.webdriver ? 'bad' : 'good');
+R.ua = navigator.userAgent;
+R.platform = navigator.platform;
+R.oscpu = navigator.oscpu;
+R.language = navigator.language;
+R.languages = navigator.languages;
+R.cores = navigator.hardwareConcurrency;
+R.touch = navigator.maxTouchPoints;
+
+// ── Locale / Intl / geo ────────────────────────────────────────────────────
+html += sec('LOCALE & GEO  <-- must follow the PROXY, not this PC');
+const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const loc = Intl.DateTimeFormat().resolvedOptions().locale;
+const off = new Date().getTimezoneOffset();
+html += row('Intl timeZone', esc(tz));
+html += row('Intl locale', esc(loc));
+html += row('Date offset (min)', off, off === 0 ? '' : 'warn');
+html += row('host PC timeZone (expect DIFFERENT)', esc(Intl.supportedValuesOf ? 'see below' : 'n/a'), 'warn');
+R.tz = tz; R.locale = loc; R.tzOffset = off;
+
+// ── Screen ─────────────────────────────────────────────────────────────────
+html += sec('SCREEN');
+html += row('screen', `${screen.width}x${screen.height} avail ${screen.availWidth}x${screen.availHeight}`);
+html += row('colorDepth / pixelDepth', `${screen.colorDepth} / ${screen.pixelDepth}`,
+  screen.colorDepth === screen.pixelDepth ? 'good' : 'warn');
+html += row('devicePixelRatio', window.devicePixelRatio);
+R.screen = `${screen.width}x${screen.height}`;
+R.dpr = window.devicePixelRatio;
+
+// ── WebGL ──────────────────────────────────────────────────────────────────
+html += sec('WEBGL');
+try {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  R.webglVendor = gl.getParameter(dbg ? dbg.UNMASKED_VENDOR_WEBGL : gl.VENDOR);
+  R.webglRenderer = gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER);
+  html += row('vendor', esc(R.webglVendor));
+  html += row('renderer', esc(R.webglRenderer));
+} catch (e) { html += row('webgl', 'FAILED: ' + esc(e.message), 'bad'); }
+
+// ── Canvas  <-- must be IDENTICAL across relaunches of one instance ────────
+html += sec('CANVAS  <-- must be IDENTICAL on relaunch, different per instance');
+function canvasHash() {
+  const c = document.createElement('canvas'); c.width = 300; c.height = 60;
+  const x = c.getContext('2d');
+  x.textBaseline = 'top'; x.font = "14px 'Arial'";
+  x.fillStyle = '#f60'; x.fillRect(10, 5, 80, 20);
+  x.fillStyle = '#069'; x.fillText('canvas fingerprint', 2, 2);
+  x.strokeStyle = 'rgba(0,0,0,0.7)'; x.beginPath(); x.arc(60, 30, 20, 0, Math.PI * 2); x.stroke();
+  const d = x.getImageData(0, 0, 300, 60).data;
+  let h = 0;
+  for (let i = 0; i < d.length; i++) h = (h * 31 + d[i]) | 0;
+  return h;
+}
+R.canvas = canvasHash();
+html += row('canvas hash', R.canvas);
+
+// ── Audio ──────────────────────────────────────────────────────────────────
+html += sec('AUDIO');
+try {
+  const ac = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 4096, 44100);
+  R.audioRate = ac.sampleRate;
+  html += row('sampleRate', ac.sampleRate);
+} catch (e) { html += row('audio', 'FAILED: ' + esc(e.message), 'bad'); }
+
+// ── Fonts ──────────────────────────────────────────────────────────────────
+html += sec('FONTS');
+const MARKERS = ['Arial','Helvetica','Times New Roman','Courier New','Georgia','Verdana','Trebuchet MS',
+  'Segoe UI','Calibri','Cambria Math','Consolas','Nirmala UI','Helvetica Neue','PingFang SC','Geneva',
+  'Noto Sans JP','Arimo','Tinos','Twemoji Mozilla'];
+const found = MARKERS.filter(f => { try { return document.fonts.check(`12px "${f}"`); } catch { return false; } });
+R.fonts = found;
+html += row('markers detected (' + found.length + ')', esc(found.join(', ') || 'none'));
+
+// ── Voices ─────────────────────────────────────────────────────────────────
+html += sec('SPEECH VOICES');
+const vs = speechSynthesis.getVoices();
+R.voiceCount = vs.length;
+html += row('voice count', vs.length, vs.length === 0 ? 'warn' : '');
+
+// ── WebRTC  <-- must NOT leak this host's real IP ──────────────────────────
+html += sec('WEBRTC  <-- must show NO host IP');
+R.webrtc = 'pending';
+function probeWebRTC() {
+  return new Promise(resolve => {
+    if (typeof RTCPeerConnection === 'undefined') return resolve({ status: 'BLOCKED (no RTCPeerConnection)', cands: [] });
+    const cands = [];
+    let pc;
+    try { pc = new RTCPeerConnection({ iceServers: [] }); } catch (e) { return resolve({ status: 'BLOCKED (' + e.message + ')', cands: [] }); }
+    const done = () => { try { pc.close(); } catch {} resolve({ status: cands.length ? 'GATHERED' : 'NO CANDIDATES', cands }); };
+    const timer = setTimeout(done, 3000);
+    pc.onicecandidate = e => { if (e.candidate) cands.push(e.candidate.candidate); else { clearTimeout(timer); done(); } };
+    pc.createDataChannel('x');
+    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => { clearTimeout(timer); done(); });
+  });
+}
+probeWebRTC().then(r => {
+  R.webrtc = r.status;
+  // host IPs show up as RFC1918 ranges or mDNS .local names
+  const priv = r.cands.filter(c => /^(a=candidate:.*\s)(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(c) || /\.local\s/.test(c));
+  html += row('result', esc(r.status), r.status === 'GATHERED' && priv.length ? 'bad' : 'good');
+  html += row('ICE candidates (' + r.cands.length + ')', esc(r.cands.join(' | ') || 'none'), priv.length ? 'bad' : '');
+  if (priv.length) html += row('<b>HOST IP LEAK</b>', esc(priv.join(' | ')), 'bad');
+  R.webrtcHostLeak = priv.length;
+  finish();
+});
+
+// ── Geolocation ────────────────────────────────────────────────────────────
+navigator.geolocation.getCurrentPosition(
+  p => { R.geo = [p.coords.latitude, p.coords.longitude, Math.round(p.coords.accuracy)];
+         html += row('geolocation', `${p.coords.latitude.toFixed(4)}, ${p.coords.longitude.toFixed(4)} +-${Math.round(p.coords.accuracy)}m`); finish(); },
+  e => { R.geo = 'denied:' + e.code; html += row('geolocation', 'denied (' + e.code + ')', 'warn'); finish(); },
+  { timeout: 4000 }
+);
+
+let done = false;
+function finish() {
+  if (done) return; done = true;
+  document.getElementById('out').innerHTML = html;
+  document.getElementById('sig').value = JSON.stringify(R);
+}
+function copySig() {
+  const t = document.getElementById('sig');
+  t.select(); document.execCommand('copy');
+  t.value = 'COPIED';
+  setTimeout(() => t.value = JSON.stringify(R), 1200);
+}
+setTimeout(finish, 6000);
+</script>
+</body>
+</html>

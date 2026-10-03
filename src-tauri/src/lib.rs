@@ -2,6 +2,7 @@ mod auto_fingerprint;
 mod camoufox;
 mod fingerprint_presets;
 mod fingerprint_validator;
+mod geo;
 mod instances;
 mod process_manager;
 mod proxy_tester;
@@ -72,7 +73,11 @@ async fn delete_instance(app: tauri::AppHandle, id: String) -> Result<(), String
 }
 
 #[tauri::command]
-async fn launch_instance(app: tauri::AppHandle, id: String, startup_url: Option<String>) -> Result<u32, String> {
+async fn launch_instance(
+    app: tauri::AppHandle,
+    id: String,
+    startup_url: Option<String>,
+) -> Result<u32, String> {
     instances::launch_instance(&app, id, startup_url).await
 }
 
@@ -96,8 +101,13 @@ async fn update_instance_proxy(
 
 #[tauri::command]
 async fn get_fingerprint_presets(
+    app: tauri::AppHandle,
 ) -> std::collections::HashMap<String, Vec<fingerprint_presets::Preset>> {
-    fingerprint_presets::get_presets().clone()
+    // Stamp the installed engine's version so the dropdowns cannot offer a user
+    // agent that contradicts the browser the instance will actually run.
+    let engine = camoufox::get_camoufox_version(&app).await;
+    let major = instances::extract_major_version(&engine).unwrap_or("156");
+    fingerprint_presets::get_presets_for(major)
 }
 
 // ── New process management commands ──────────────────────────────────────
@@ -150,17 +160,29 @@ async fn confirm_close_action(app: tauri::AppHandle, action: String) -> Result<(
 // ── New feature commands ─────────────────────────────────────────────────
 
 #[tauri::command]
-async fn rename_instance(app: tauri::AppHandle, id: String, new_name: String) -> Result<(), String> {
+async fn rename_instance(
+    app: tauri::AppHandle,
+    id: String,
+    new_name: String,
+) -> Result<(), String> {
     instances::rename_instance(&app, id, new_name).await
 }
 
 #[tauri::command]
-async fn update_instance_tags(app: tauri::AppHandle, id: String, tags: Vec<String>) -> Result<(), String> {
+async fn update_instance_tags(
+    app: tauri::AppHandle,
+    id: String,
+    tags: Vec<String>,
+) -> Result<(), String> {
     instances::update_instance_tags(&app, id, tags).await
 }
 
 #[tauri::command]
-async fn update_instance_notes(app: tauri::AppHandle, id: String, notes: Option<String>) -> Result<(), String> {
+async fn update_instance_notes(
+    app: tauri::AppHandle,
+    id: String,
+    notes: Option<String>,
+) -> Result<(), String> {
     instances::update_instance_notes(&app, id, notes).await
 }
 
@@ -175,32 +197,54 @@ async fn export_all_instances(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn import_instances(app: tauri::AppHandle, json: String) -> Result<Vec<instances::InstanceConfig>, String> {
+async fn import_instances(
+    app: tauri::AppHandle,
+    json: String,
+) -> Result<Vec<instances::InstanceConfig>, String> {
     instances::import_instances(&app, json).await
 }
 
 #[tauri::command]
-async fn test_proxy(proxy_config: instances::ProxyConfig) -> Result<proxy_tester::ProxyTestResult, String> {
+async fn test_proxy(
+    proxy_config: instances::ProxyConfig,
+) -> Result<proxy_tester::ProxyTestResult, String> {
     proxy_tester::test_proxy(proxy_config).await
 }
 
 #[tauri::command]
-async fn update_proxy_pool(app: tauri::AppHandle, id: String, pool: Vec<instances::ProxyConfig>, mode: Option<String>) -> Result<(), String> {
+async fn update_proxy_pool(
+    app: tauri::AppHandle,
+    id: String,
+    pool: Vec<instances::ProxyConfig>,
+    mode: Option<String>,
+) -> Result<(), String> {
     instances::update_proxy_pool(&app, id, pool, mode).await
 }
 
 #[tauri::command]
-async fn update_fingerprint_pool(app: tauri::AppHandle, id: String, pool: Vec<instances::FingerprintConfig>, mode: Option<String>) -> Result<(), String> {
+async fn update_fingerprint_pool(
+    app: tauri::AppHandle,
+    id: String,
+    pool: Vec<instances::FingerprintConfig>,
+    mode: Option<String>,
+) -> Result<(), String> {
     instances::update_fingerprint_pool(&app, id, pool, mode).await
 }
 
 #[tauri::command]
-async fn get_session_info(app: tauri::AppHandle, id: String) -> Result<session_manager::SessionInfo, String> {
+async fn get_session_info(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<session_manager::SessionInfo, String> {
     session_manager::get_session_info(&app, id).await
 }
 
 #[tauri::command]
-async fn clear_session_data(app: tauri::AppHandle, id: String, types: Vec<String>) -> Result<(), String> {
+async fn clear_session_data(
+    app: tauri::AppHandle,
+    id: String,
+    types: Vec<String>,
+) -> Result<(), String> {
     session_manager::clear_session_data(&app, id, types).await
 }
 

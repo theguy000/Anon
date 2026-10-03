@@ -96,8 +96,6 @@ export interface FingerprintConfig {
   // WebRTC
   webrtc_ipv4?: string | null;
   webrtc_ipv6?: string | null;
-  webrtc_local_ipv4?: string | null;
-  webrtc_local_ipv6?: string | null;
 
   // HTTP Headers
   header_user_agent?: string | null;
@@ -541,9 +539,12 @@ export async function updateInstanceSettings(id: string, fingerprint: Fingerprin
   try {
     const conflicts = await invoke<FingerprintConflict[]>('update_instance_settings', { id, fingerprint });
     await loadInstances();
-    addToast('Fingerprint settings saved', 'success');
+    // The backend returns conflicts WITHOUT persisting (see instances.rs), so a
+    // success toast here would claim a save that never happened.
     if (conflicts && conflicts.length > 0) {
-      addToast(`${conflicts.length} fingerprint conflict(s) detected`, 'warning');
+      addToast(`${conflicts.length} fingerprint conflict(s) detected — not saved`, 'warning');
+    } else {
+      addToast('Fingerprint settings saved', 'success');
     }
     return conflicts ?? [];
   } catch (e) {
