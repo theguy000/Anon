@@ -27,6 +27,12 @@
   let viewMode: 'grid' | 'list' = 'list';
   let nameError = '';
 
+  function fmtBytes(b: number) {
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1024).toFixed(0) + ' KB';
+  }
+
   // Sort state
   type SortField = 'name' | 'created_at';
   type SortDir = 'asc' | 'desc';
@@ -203,10 +209,21 @@
 
     {#if $installProgress}
       <div class="progress-container">
-        <div class="progress-status">{$installProgress.status.toUpperCase()}</div>
+        <div class="progress-row">
+          <div class="progress-status">{$installProgress.status.toUpperCase()}</div>
+          {#if $installProgress.downloaded && $installProgress.total}
+            <div class="progress-pct">{Math.round(($installProgress.downloaded / $installProgress.total) * 100)}%</div>
+          {/if}
+        </div>
         <div class="progress-bar-wrapper">
           <div class="progress-bar" style="width: {$installProgress.progress}%"></div>
         </div>
+        {#if $installProgress.downloaded !== undefined}
+          <div class="progress-bytes">
+            {fmtBytes($installProgress.downloaded)}
+            {#if $installProgress.total}&nbsp;of {fmtBytes($installProgress.total)}{/if}
+          </div>
+        {/if}
       </div>
     {:else}
       <button class="btn btn-primary btn-large" on:click={startDownload}>
@@ -476,12 +493,36 @@
     margin-top: 1rem;
   }
 
+  .progress-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
   .progress-status {
     font-size: 0.75rem;
     color: var(--text-muted);
-    margin-bottom: 0.5rem;
     text-align: left;
     letter-spacing: 0.1em;
+    overflow-wrap: anywhere;
+  }
+
+  .progress-pct,
+  .progress-bytes {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .progress-pct {
+    color: var(--text-main);
+  }
+
+  .progress-bytes {
+    margin-top: 0.5rem;
   }
 
   .progress-bar-wrapper {

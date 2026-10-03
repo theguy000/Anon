@@ -214,6 +214,7 @@ pub fn generate_auto_config(
     change_window_size: bool,
     default_outer_width: Option<u32>,
     default_outer_height: Option<u32>,
+    target_ff_version: Option<&str>,
 ) -> serde_json::Value {
     let presets = fingerprint_presets::get_presets();
     let mut rng = rand::thread_rng();
@@ -267,14 +268,19 @@ pub fn generate_auto_config(
 
     if let Some(ref nav) = preset.navigator {
         if let Some(ref ua) = nav.user_agent {
+            let eff_ua = if let Some(ver) = target_ff_version {
+                crate::instances::harmonize_firefox_user_agent(ua, ver)
+            } else {
+                ua.clone()
+            };
             config.insert(
                 "navigator.userAgent".into(),
-                serde_json::Value::String(ua.clone()),
+                serde_json::Value::String(eff_ua.clone()),
             );
             // Also set as HTTP header
             config.insert(
                 "headers.User-Agent".into(),
-                serde_json::Value::String(ua.clone()),
+                serde_json::Value::String(eff_ua),
             );
         }
         if let Some(ref plat) = nav.platform {

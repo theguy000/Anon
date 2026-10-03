@@ -83,6 +83,7 @@ export interface FingerprintConfig {
 
   // Fonts
   fonts_spacing_seed?: number | null;
+  fonts?: string[] | null;
 
   // Geolocation, Timezone & Locale
   geo_latitude?: number | null;
@@ -238,7 +239,15 @@ export interface FingerprintConflict {
 // ── Stores ──────────────────────────────────────────────────────────────
 
 export const camoufoxDownloaded = writable<boolean | null>(null);
-export const installProgress = writable<{ status: string; progress: number } | null>(null);
+export const camoufoxVersion = writable<string>('Camoufox');
+export interface InstallStatus {
+  status: string;
+  progress: number;
+  downloaded?: number;
+  total?: number;
+}
+
+export const installProgress = writable<InstallStatus | null>(null);
 export const instances = writable<InstanceConfig[]>([]);
 export const fingerprintPresets = writable<Record<string, Preset[]>>({});
 export const isLaunching = writable<string | null>(null);
@@ -356,6 +365,12 @@ export async function checkInstallation() {
     const isDownloaded = await invoke<boolean>('check_camoufox');
     camoufoxDownloaded.set(isDownloaded);
     if (isDownloaded) {
+      try {
+        const ver = await invoke<string>('get_camoufox_version');
+        if (ver) camoufoxVersion.set(ver);
+      } catch (e) {
+        console.error('Failed to get camoufox version', e);
+      }
       await loadInstances();
       await loadSettings();
       await loadFingerprintPresets();
@@ -379,6 +394,10 @@ export async function startDownload() {
   const isDownloaded = await invoke<boolean>('check_camoufox');
   if (isDownloaded) {
     camoufoxDownloaded.set(true);
+    try {
+      const ver = await invoke<string>('get_camoufox_version');
+      if (ver) camoufoxVersion.set(ver);
+    } catch {}
     await loadInstances();
     await loadSettings();
     await loadFingerprintPresets();
@@ -386,13 +405,17 @@ export async function startDownload() {
   }
 
   installProgress.set({ status: 'Starting download...', progress: 0 });
-  const unlisten = await listen<{ status: string; progress: number }>('install_progress', (event) => {
+  const unlisten = await listen<InstallStatus>('install_progress', (event) => {
     installProgress.set(event.payload);
   });
 
   try {
     await invoke('fetch_camoufox');
     camoufoxDownloaded.set(true);
+    try {
+      const ver = await invoke<string>('get_camoufox_version');
+      if (ver) camoufoxVersion.set(ver);
+    } catch {}
     installProgress.set(null);
   } catch (e) {
     console.error('Download failed', e);

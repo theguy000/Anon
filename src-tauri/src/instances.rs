@@ -63,6 +63,7 @@ pub struct FingerprintConfig {
 
     // Fonts
     pub fonts_spacing_seed: Option<u32>,
+    pub fonts: Option<Vec<String>>,
 
     // Geolocation, Timezone & Locale
     pub geo_latitude: Option<f64>,
@@ -116,10 +117,62 @@ pub struct FingerprintConfig {
     pub auto_change_window_size: Option<bool>,
 }
 
+pub fn extract_major_version(v: &str) -> Option<&str> {
+    for word in v.split(|c: char| !c.is_ascii_alphanumeric() && c != '.') {
+        let clean = word.trim_start_matches('v');
+        if let Some(dot_idx) = clean.find('.') {
+            let major = &clean[..dot_idx];
+            if major.len() == 3 && major.chars().all(|c| c.is_ascii_digit()) {
+                return Some(major);
+            }
+        } else if clean.len() == 3 && clean.chars().all(|c| c.is_ascii_digit()) {
+            return Some(clean);
+        }
+    }
+    None
+}
+
+pub fn harmonize_firefox_user_agent(ua: &str, ff_version: &str) -> String {
+    if !ua.contains("Firefox/") && !ua.contains("rv:") {
+        return ua.to_string();
+    }
+    let mut res = String::with_capacity(ua.len());
+    let mut i = 0;
+    let bytes = ua.as_bytes();
+    while i < bytes.len() {
+        if ua[i..].starts_with("Firefox/") {
+            res.push_str("Firefox/");
+            let start = i + 8;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+                end += 1;
+            }
+            res.push_str(ff_version);
+            res.push_str(".0");
+            i = end;
+        } else if ua[i..].starts_with("rv:") {
+            res.push_str("rv:");
+            let start = i + 3;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+                end += 1;
+            }
+            res.push_str(ff_version);
+            res.push_str(".0");
+            i = end;
+        } else {
+            let ch = ua[i..].chars().next().unwrap();
+            res.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    res
+}
+
 /// Convert a FingerprintConfig into a JSON object that camoufox understands
 /// (property keys from camoufox's properties.json).
 /// Only non-None fields are included so camoufox falls back to its defaults.
-fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
+fn build_camou_config(fp: &FingerprintConfig, target_ff_version: Option<&str>) -> serde_json::Value {
     let mut m = serde_json::Map::new();
 
     // ── Helper macros ────────────────────────────────────────────────────
@@ -160,12 +213,26 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
     }
 
     // ── Navigator ────────────────────────────────────────────────────────
-    set_str!("navigator.userAgent", fp.user_agent);
+    let effective_ua = fp.user_agent.as_ref().map(|ua| {
+        if let Some(ver) = target_ff_version {
+            harmonize_firefox_user_agent(ua, ver)
+        } else {
+            ua.clone()
+        }
+    });
+    set_str!("navigator.userAgent", effective_ua);
     set_str!("navigator.platform", fp.platform);
     set_str!("navigator.oscpu", fp.oscpu);
     set_str!("navigator.appCodeName", fp.app_code_name);
     set_str!("navigator.appName", fp.app_name);
-    set_str!("navigator.appVersion", fp.app_version);
+    let effective_app_ver = fp.app_version.as_ref().map(|v| {
+        if let Some(ver) = target_ff_version {
+            harmonize_firefox_user_agent(v, ver)
+        } else {
+            v.clone()
+        }
+    });
+    set_str!("navigator.appVersion", effective_app_ver);
     set_str!("navigator.product", fp.product);
     set_str!("navigator.productSub", fp.product_sub);
     set_str!("navigator.buildID", fp.build_id);
@@ -211,10 +278,12 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
     // ── WebGL ────────────────────────────────────────────────────────
     set_str!("webGl:renderer", fp.webgl_renderer);
     set_str!("webGl:vendor", fp.webgl_vendor);
-    set_bool!(
-        "webGl:parameters:blockIfNotDefined",
-        fp.webgl_block_if_not_defined
-    );
+    if let Some(v) = fp.webgl_block_if_not_defined {
+        m.insert("webGl:parameters:blockIfNotDefined".to_string(), serde_json::json!(v));
+        m.insert("webGl2:parameters:blockIfNotDefined".to_string(), serde_json::json!(v));
+        m.insert("webGl:shaderPrecisionFormats:blockIfNotDefined".to_string(), serde_json::json!(v));
+        m.insert("webGl2:shaderPrecisionFormats:blockIfNotDefined".to_string(), serde_json::json!(v));
+    }
 
     // ── Canvas & Audio Seeds ─────────────────────────────────────────
     set_u32!("canvas:seed", fp.canvas_seed);
@@ -227,6 +296,13 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
 
     // ── Fonts ────────────────────────────────────────────────────────
     set_u32!("fonts:spacing_seed", fp.fonts_spacing_seed);
+    if let Some(ref fonts) = fp.fonts {
+        let arr: Vec<serde_json::Value> = fonts
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect();
+        m.insert("fonts".to_string(), serde_json::Value::Array(arr));
+    }
 
     // ── Geolocation, Timezone & Locale ───────────────────────────────
     set_f64!("geolocation:latitude", fp.geo_latitude);
@@ -243,7 +319,14 @@ fn build_camou_config(fp: &FingerprintConfig) -> serde_json::Value {
     set_str!("webrtc:localipv6", fp.webrtc_local_ipv6);
 
     // ── HTTP Headers ────────────────────────────────────────────────
-    set_str!("headers.User-Agent", fp.header_user_agent);
+    let effective_header_ua = fp.header_user_agent.as_ref().map(|ua| {
+        if let Some(ver) = target_ff_version {
+            harmonize_firefox_user_agent(ua, ver)
+        } else {
+            ua.clone()
+        }
+    }).or_else(|| effective_ua.clone());
+    set_str!("headers.User-Agent", effective_header_ua);
     set_str!("headers.Accept-Language", fp.header_accept_language);
     set_str!("headers.Accept-Encoding", fp.header_accept_encoding);
 
@@ -445,7 +528,85 @@ fn ensure_user_js(
         user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
     }
 
+    // Allow unsigned unpacked extensions (e.g. for proxy authentication)
+    user_js_content.push_str("user_pref(\"extensions.autoDisableScopes\", 0);\n");
+    user_js_content.push_str("user_pref(\"xpinstall.signatures.required\", false);\n");
+
     fs::write(user_js_path, user_js_content)
+}
+
+fn ensure_proxy_auth_extension(
+    instance_dir: &Path,
+    proxy_config: &Option<ProxyConfig>,
+) -> io::Result<Option<PathBuf>> {
+    let ext_dir = instance_dir.join("proxy_auth_ext");
+    if let Some(pc) = proxy_config {
+        if let (Some(ref u), Some(ref p)) = (&pc.username, &pc.password) {
+            if !u.is_empty() {
+                fs::create_dir_all(&ext_dir)?;
+
+                let manifest = serde_json::json!({
+                    "manifest_version": 2,
+                    "name": "Anon Proxy Auth",
+                    "version": "1.0",
+                    "description": "Proxy authentication for Anon Browser",
+                    "permissions": [
+                        "webRequest",
+                        "webRequestBlocking",
+                        "<all_urls>"
+                    ],
+                    "background": {
+                        "scripts": ["background.js"]
+                    }
+                });
+                fs::write(
+                    ext_dir.join("manifest.json"),
+                    serde_json::to_string_pretty(&manifest)?,
+                )?;
+
+                let bg_js = format!(
+                    r#"browser.webRequest.onAuthRequired.addListener(
+    function(details) {{
+        if (details.isProxy) {{
+            return {{
+                authCredentials: {{
+                    username: {},
+                    password: {}
+                }}
+            }};
+        }}
+    }},
+    {{ urls: ["<all_urls>"] }},
+    ["blocking"]
+);"#,
+                    serde_json::to_string(u).unwrap_or_default(),
+                    serde_json::to_string(p).unwrap_or_default()
+                );
+                fs::write(ext_dir.join("background.js"), bg_js)?;
+                return Ok(Some(ext_dir));
+            }
+        }
+    }
+
+    if ext_dir.exists() {
+        let _ = fs::remove_dir_all(&ext_dir);
+    }
+    Ok(None)
+}
+
+fn apply_camou_config_env(cmd: &mut std::process::Command, config_json: &str) {
+    const CHUNK_SIZE: usize = 2047;
+    if config_json.len() <= CHUNK_SIZE {
+        cmd.env("CAMOU_CONFIG", config_json);
+        cmd.env("CAMOU_CONFIG_1", config_json);
+    } else {
+        cmd.env_remove("CAMOU_CONFIG");
+        let chars: Vec<char> = config_json.chars().collect();
+        for (i, chunk) in chars.chunks(CHUNK_SIZE).enumerate() {
+            let chunk_str: String = chunk.iter().collect();
+            cmd.env(format!("CAMOU_CONFIG_{}", i + 1), chunk_str);
+        }
+    }
 }
 
 fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
@@ -456,7 +617,7 @@ fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
 
         // Preserve essential config files
         if let Some(name) = file_name {
-            if name == "anon_config.json" || name == "user.js" {
+            if name == "anon_config.json" || name == "user.js" || name == "proxy_auth_ext" {
                 continue;
             }
         }
@@ -654,25 +815,56 @@ pub async fn launch_instance(app: &AppHandle, id: String, startup_url: Option<St
         config.as_ref().and_then(|c| c.fingerprint.as_ref())
     };
 
+    // Detect installed Camoufox major version (e.g. "156" or "152")
+    let engine_ver_str = crate::camoufox::get_camoufox_version(app).await;
+    let target_ff_ver = extract_major_version(&engine_ver_str).unwrap_or("156");
+
+    // Ensure proxy auth extension if credentials exist
+    let effective_proxy = if let Some(ref pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
+        if !pool.is_empty() {
+            let idx = config.as_ref().and_then(|c| c.proxy_rotation_index).unwrap_or(0) % pool.len();
+            Some(&pool[idx])
+        } else {
+            config.as_ref().and_then(|c| c.proxy_config.as_ref())
+        }
+    } else {
+        config.as_ref().and_then(|c| c.proxy_config.as_ref())
+    };
+
+    let proxy_ext = ensure_proxy_auth_extension(&instance_dir, &effective_proxy.cloned()).ok().flatten();
+
     // Build the CAMOU_CONFIG JSON from fingerprint settings
-    let camou_config_json = if let Some(fp) = effective_fp {
+    let mut camou_val: serde_json::Value = if let Some(fp) = effective_fp {
         if fp.auto_fingerprint == Some(true) {
             crate::auto_fingerprint::generate_auto_config(
                 fp.auto_change_window_size.unwrap_or(true),
                 fp.outer_width,
                 fp.outer_height,
+                Some(target_ff_ver),
             )
-            .to_string()
         } else {
-            build_camou_config(fp).to_string()
+            build_camou_config(fp, Some(target_ff_ver))
         }
     } else {
-        r#"{"showcursor":false}"#.to_string()
+        serde_json::json!({"showcursor": false})
     };
 
-    // Spawn detached process with CAMOU_CONFIG env var
+    if let Some(ext_path) = proxy_ext {
+        let ext_str = ext_path.to_string_lossy().to_string();
+        if let Some(obj) = camou_val.as_object_mut() {
+            let addons_arr = obj.entry("addons").or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            if let Some(arr) = addons_arr.as_array_mut() {
+                arr.push(serde_json::Value::String(ext_str));
+            }
+        }
+    }
+
+    let camou_config_json = camou_val.to_string();
+
+    // Spawn detached process with chunked CAMOU_CONFIG env vars
     let mut cmd = std::process::Command::new(bin_path);
-    cmd.arg("--profile").arg(&instance_dir).env("CAMOU_CONFIG", &camou_config_json);
+    cmd.arg("--profile").arg(&instance_dir);
+    apply_camou_config_env(&mut cmd, &camou_config_json);
     if let Some(ref url) = startup_url {
         cmd.arg(url);
     }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { fade, scale } from 'svelte/transition';
-  import { settings, updateSettings, loadSettings, exportAllInstances, importInstances, addToast } from '$lib/store';
+  import { settings, updateSettings, loadSettings, exportAllInstances, importInstances, addToast, camoufoxVersion } from '$lib/store';
   import type { AppSettings } from '$lib/store';
   import TagManager from './TagManager.svelte';
   import SettingsSection from '$lib/components/instance/SettingsSection.svelte';
@@ -194,7 +194,7 @@
             </div>
             <div class="about-row">
               <span class="about-label">ENGINE</span>
-              <span class="about-value">CAMOUFOX</span>
+              <span class="about-value">{$camoufoxVersion}</span>
             </div>
           </div>
         </SettingsSection>

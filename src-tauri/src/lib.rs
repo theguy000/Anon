@@ -8,11 +8,16 @@ mod proxy_tester;
 mod session_manager;
 mod settings;
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 async fn check_camoufox(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(camoufox::get_camoufox_binary(&app).await.is_some())
+}
+
+#[tauri::command]
+async fn get_camoufox_version(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(camoufox::get_camoufox_version(&app).await)
 }
 
 #[tauri::command]
@@ -203,8 +208,22 @@ async fn clear_session_data(app: tauri::AppHandle, id: String, types: Vec<String
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            #[cfg(debug_assertions)]
+            {
+                if std::net::TcpStream::connect("127.0.0.1:1422").is_ok() {
+                    if let Some(window) = app.get_webview_window("main") {
+                        if let Ok(url) = "http://localhost:1422".parse() {
+                            let _ = window.navigate(url);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             check_camoufox,
+            get_camoufox_version,
             fetch_camoufox,
             list_instances,
             create_instance,
