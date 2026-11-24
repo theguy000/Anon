@@ -247,19 +247,25 @@ fn is_preserved_entry(name: &std::ffi::OsStr) -> bool {
             .any(|preserved| s.eq_ignore_ascii_case(preserved))
 }
 
+fn remove_path(path: &Path) {
+    if path.is_dir() {
+        let _ = std::fs::remove_dir_all(path);
+    } else if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 fn rollback_swap(app_dir: &Path, backup_dir: &Path, installed_entries: &[std::ffi::OsString]) {
     for name in installed_entries {
-        let path = app_dir.join(name);
-        if path.is_dir() {
-            let _ = std::fs::remove_dir_all(&path);
-        } else if path.exists() {
-            let _ = std::fs::remove_file(&path);
-        }
+        remove_path(&app_dir.join(name));
     }
 
     if let Ok(entries) = std::fs::read_dir(backup_dir) {
         for entry in entries.flatten() {
-            let _ = std::fs::rename(entry.path(), app_dir.join(entry.file_name()));
+            let dest = app_dir.join(entry.file_name());
+            // Windows fs::rename fails if destination exists (e.g. partial version.txt).
+            remove_path(&dest);
+            let _ = std::fs::rename(entry.path(), dest);
         }
     }
 }
@@ -307,85 +313,63 @@ pub(crate) fn replace_engine_from_zip(
         return Err(err);
     }
 
-    std::fs::create_dir_all(&backup_dir)
-        .map_err(|e| format!("Failed to create backup directory: {}", e))?;
+    if let Err(e) = std::fs::create_dir_all(&backup_dir) {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(format!("Failed to create backup directory: {}", e));
+    }
 
     let zip_name_in_app_dir = (zip_path.parent() == Some(app_dir))
         .then(|| zip_path.file_name())
         .flatten();
 
-    let entries = std::fs::read_dir(app_dir)
-        .map_err(|e| format!("Failed to read engine directory: {}", e))?;
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                rollback_swap(app_dir, &backup_dir, &[]);
-                let _ = std::fs::remove_dir_all(&staging_dir);
-                let _ = std::fs::remove_dir_all(&backup_dir);
-                return Err(format!("Failed to inspect engine directory: {}", e));
-            }
-        };
-        let name = entry.file_name();
-        if is_preserved_entry(&name) || zip_name_in_app_dir == Some(name.as_os_str()) {
-            continue;
-        }
-        if let Err(e) = std::fs::rename(entry.path(), backup_dir.join(&name)) {
-            rollback_swap(app_dir, &backup_dir, &[]);
-            let _ = std::fs::remove_dir_all(&staging_dir);
-            let _ = std::fs::remove_dir_all(&backup_dir);
-            return Err(format!(
-                "Failed to move old engine file '{}' (close any open Camoufox windows and retry): {}",
-                name.to_string_lossy(),
-                e
-            ));
-        }
-    }
-
     let mut installed_entries = Vec::new();
-    let staged_entries = match std::fs::read_dir(&staging_dir) {
-        Ok(e) => e,
-        Err(e) => {
-            rollback_swap(app_dir, &backup_dir, &installed_entries);
-            let _ = std::fs::remove_dir_all(&staging_dir);
-            let _ = std::fs::remove_dir_all(&backup_dir);
-            return Err(format!("Failed to read staged engine files: {}", e));
-        }
-    };
-
-    for entry in staged_entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                rollback_swap(app_dir, &backup_dir, &installed_entries);
-                let _ = std::fs::remove_dir_all(&staging_dir);
-                let _ = std::fs::remove_dir_all(&backup_dir);
-                return Err(format!("Failed to inspect staged engine files: {}", e));
+    let swap_result = (|| -> Result<(), String> {
+        let entries = std::fs::read_dir(app_dir)
+            .map_err(|e| format!("Failed to read engine directory: {}", e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to inspect engine directory: {}", e))?;
+            let name = entry.file_name();
+            if is_preserved_entry(&name) || zip_name_in_app_dir == Some(name.as_os_str()) {
+                continue;
             }
-        };
-        let name = entry.file_name();
-        if is_preserved_entry(&name) {
-            continue;
+            std::fs::rename(entry.path(), backup_dir.join(&name)).map_err(|e| {
+                format!(
+                    "Failed to move old engine file '{}' (close any open Camoufox windows and retry): {}",
+                    name.to_string_lossy(),
+                    e
+                )
+            })?;
         }
-        if let Err(e) = std::fs::rename(entry.path(), app_dir.join(&name)) {
-            rollback_swap(app_dir, &backup_dir, &installed_entries);
-            let _ = std::fs::remove_dir_all(&staging_dir);
-            let _ = std::fs::remove_dir_all(&backup_dir);
-            return Err(format!(
-                "Failed to install new engine file '{}': {}",
-                name.to_string_lossy(),
-                e
-            ));
-        }
-        installed_entries.push(name);
-    }
 
-    if let Err(e) = std::fs::write(app_dir.join("version.txt"), new_version) {
+        let staged_entries = std::fs::read_dir(&staging_dir)
+            .map_err(|e| format!("Failed to read staged engine files: {}", e))?;
+        for entry in staged_entries {
+            let entry =
+                entry.map_err(|e| format!("Failed to inspect staged engine files: {}", e))?;
+            let name = entry.file_name();
+            if is_preserved_entry(&name) {
+                continue;
+            }
+            std::fs::rename(entry.path(), app_dir.join(&name)).map_err(|e| {
+                format!(
+                    "Failed to install new engine file '{}': {}",
+                    name.to_string_lossy(),
+                    e
+                )
+            })?;
+            installed_entries.push(name);
+        }
+
+        std::fs::write(app_dir.join("version.txt"), new_version)
+            .map_err(|e| format!("Failed to write version.txt: {}", e))?;
+        Ok(())
+    })();
+
+    if let Err(err) = swap_result {
         rollback_swap(app_dir, &backup_dir, &installed_entries);
         let _ = std::fs::remove_dir_all(&staging_dir);
         let _ = std::fs::remove_dir_all(&backup_dir);
-        return Err(format!("Failed to write version.txt: {}", e));
+        return Err(err);
     }
 
     std::fs::remove_dir_all(&backup_dir).map_err(|e| {
