@@ -88,6 +88,11 @@ async fn launch_instance(
 }
 
 #[tauri::command]
+async fn regenerate_identity(app: tauri::AppHandle, id: String) -> Result<u64, String> {
+    instances::regenerate_identity(&app, id).await
+}
+
+#[tauri::command]
 async fn update_instance_settings(
     app: tauri::AppHandle,
     id: String,
@@ -293,6 +298,7 @@ pub fn run() {
             toggle_persistence,
             get_settings,
             update_settings,
+            regenerate_identity,
             update_instance_settings,
             update_instance_proxy,
             get_fingerprint_presets,
