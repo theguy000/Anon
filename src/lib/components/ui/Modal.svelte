@@ -5,39 +5,34 @@
   const dispatch = createEventDispatcher();
 
   export let show = false;
-  export let maxWidth = "450px";
+  export let maxWidth = '440px';
+  export let ariaLabel = 'Dialog';
 
   function close() {
     dispatch('close');
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') close();
-  }
-
-  function handleBackdropKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === ' ') close();
+    if (e.key === 'Escape' && show) close();
   }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
 
 {#if show}
-  <div 
-    class="modal-backdrop" 
-    transition:fade={{ duration: 200 }} 
-    on:click={close}
-    on:keydown={handleBackdropKeydown}
+  <div
+    class="modal-backdrop"
+    transition:fade={{ duration: 150 }}
+    on:click|self={close}
     role="presentation"
   >
-    <div 
-      class="modal bento-panel" 
+    <div
+      class="modal"
       style="max-width: {maxWidth}"
-      transition:scale={{ duration: 200, start: 0.98, opacity: 0 }}
-      on:click|stopPropagation
-      on:keydown|stopPropagation
+      transition:scale={{ duration: 150, start: 0.985, opacity: 0 }}
       role="dialog"
       aria-modal="true"
+      aria-label={ariaLabel}
       tabindex="-1"
     >
       <slot />
@@ -48,11 +43,8 @@
 <style>
   .modal-backdrop {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.85);
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
@@ -62,12 +54,13 @@
 
   .modal {
     width: calc(100% - 2rem);
-    padding: 2.5rem;
+    padding: 20px;
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: 16px;
     position: relative;
-    border: 1px solid var(--panel-border);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    background: var(--panel-bg);
+    border: 1px solid #2b2b30;
+    border-radius: var(--radius);
   }
 </style>

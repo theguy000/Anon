@@ -49,8 +49,8 @@
       a.download = `anon-backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch (e) {
-      // Error toasted in store
+    } catch {
+      // Toasted in store
     }
   }
 
@@ -65,8 +65,8 @@
     try {
       const text = await file.text();
       await importInstances(text);
-    } catch (err) {
-      // Error toasted in store
+    } catch {
+      // Toasted in store
     }
     input.value = '';
   }
@@ -77,10 +77,8 @@
     return (b / 1024).toFixed(0) + ' KB';
   }
 
-
-
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') handleClose();
+    if (e.key === 'Escape' && show) handleClose();
   }
 </script>
 
@@ -89,164 +87,152 @@
 {#if show}
   <div
     class="settings-backdrop"
-    transition:fade={{ duration: 200 }}
-    on:click={handleClose}
-    on:keydown={e => e.key === 'Enter' && handleClose()}
+    transition:fade={{ duration: 150 }}
+    on:click|self={handleClose}
     role="presentation"
   >
     <div
-      class="settings-panel bento-panel"
-      transition:scale={{ duration: 200, start: 0.98, opacity: 0 }}
-      on:click|stopPropagation
-      on:keydown|stopPropagation
+      class="settings-panel"
+      transition:scale={{ duration: 150, start: 0.985, opacity: 0 }}
       role="dialog"
       aria-modal="true"
+      aria-label="Settings"
       tabindex="-1"
     >
       <div class="sp-header">
-        <h3>SETTINGS</h3>
-        <button class="close-btn" aria-label="Close" on:click={handleClose}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
+        <h3>Settings</h3>
+        <button class="close-btn" aria-label="Close" on:click={handleClose}>×</button>
       </div>
 
       <div class="sp-body">
         {#if localSettings}
-        <SettingsSection title="General" open={true}>
-          <div class="field-row">
-            <div class="field">
-              <label>DEFAULT VIEW</label>
-              <select class="input-field" bind:value={localSettings.default_view_mode}>
-                <option value={null}>SYSTEM DEFAULT</option>
-                <option value="grid">GRID</option>
-                <option value="list">LIST</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>DEFAULT SORT</label>
-              <select class="input-field" bind:value={localSettings.default_sort_field}>
-                <option value={null}>CREATED DATE</option>
-                <option value="name">NAME</option>
-                <option value="created_at">CREATED</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>SORT DIRECTION</label>
-              <select class="input-field" bind:value={localSettings.default_sort_dir}>
-                <option value={null}>DEFAULT</option>
-                <option value="asc">ASCENDING</option>
-                <option value="desc">DESCENDING</option>
-              </select>
-            </div>
-          </div>
-        </SettingsSection>
-
-        <SettingsSection title="Confirmations">
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-label">SKIP WIPE CONFIRMATION</span>
-              <span class="toggle-desc">DON'T ASK WHEN DISABLING DATA RETENTION</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" bind:checked={localSettings.skip_wipe_confirmation}>
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-label">SKIP DELETE CONFIRMATION</span>
-              <span class="toggle-desc">DON'T ASK WHEN DELETING INSTANCES</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" bind:checked={localSettings.skip_delete_confirmation}>
-              <span class="slider"></span>
-            </label>
-          </div>
-        </SettingsSection>
-
-        <SettingsSection title="Tags">
-          <TagManager bind:settings={localSettings} />
-        </SettingsSection>
-
-        <SettingsSection title="Paths">
-          <div class="field">
-            <label>CAMOUFOX BINARY PATH</label>
-            <input
-              type="text"
-              class="input-field mono"
-              placeholder="AUTO-DETECTED"
-              bind:value={localSettings.camoufox_path}
-            />
-            <span class="field-hint">LEAVE EMPTY FOR AUTO-DETECTION</span>
-          </div>
-        </SettingsSection>
-
-        <SettingsSection title="Data">
-          <div class="data-actions">
-            <button class="btn" on:click={handleExportAll}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              EXPORT ALL
-            </button>
-            <button class="btn" on:click={handleImportClick}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              IMPORT
-            </button>
-            <input
-              type="file"
-              accept=".json"
-              bind:this={importFileInput}
-              on:change={handleImportFile}
-              style="display: none;"
-            />
-          </div>
-        </SettingsSection>
-
-        <SettingsSection title="About">
-          <div class="about-info">
-            <div class="about-row">
-              <span class="about-label">APP</span>
-              <span class="about-value">ANON INSTANCE MANAGER</span>
-            </div>
-            <div class="about-row">
-              <span class="about-label">VERSION</span>
-              <span class="about-value">0.1.2</span>
-            </div>
-            <div class="about-row about-engine-row">
-              <span class="about-label">ENGINE</span>
-              <span class="about-value">{$camoufoxVersion}</span>
-              <button
-                class="btn btn-sm engine-update-btn"
-                disabled={$engineUpdating}
-                on:click={updateCamoufox}
-              >
-                {$engineUpdating ? 'UPDATING...' : 'UPDATE ENGINE'}
-              </button>
-            </div>
-            {#if $engineUpdateProgress}
-              <div class="engine-progress" aria-live="polite">
-                <div class="engine-progress-row">
-                  <span class="engine-progress-status">{$engineUpdateProgress.status.toUpperCase()}</span>
-                  <span class="engine-progress-pct">{$engineUpdateProgress.progress}%</span>
+          <SettingsSection title="Engine & About" open={true}>
+            <div class="about-info">
+              <div class="about-row about-engine-row">
+                <div class="about-col">
+                  <span class="about-label">Camoufox engine</span>
+                  <span class="about-value mono">{$camoufoxVersion}</span>
                 </div>
-                <div class="engine-progress-track">
-                  <div class="engine-progress-fill" style="width: {$engineUpdateProgress.progress}%"></div>
-                </div>
-                {#if $engineUpdateProgress.downloaded !== undefined}
-                  <div class="engine-progress-bytes">
-                    {fmtBytes($engineUpdateProgress.downloaded)}
-                    {#if $engineUpdateProgress.total}&nbsp;of {fmtBytes($engineUpdateProgress.total)}{/if}
-                  </div>
-                {/if}
+                <button
+                  class="btn btn-sm"
+                  disabled={$engineUpdating}
+                  on:click={updateCamoufox}
+                >
+                  {$engineUpdating ? 'Updating…' : 'Update engine'}
+                </button>
               </div>
-            {/if}
-          </div>
-        </SettingsSection>
+              {#if $engineUpdateProgress}
+                <div class="engine-progress" aria-live="polite">
+                  <div class="engine-progress-row">
+                    <span class="engine-progress-status">{$engineUpdateProgress.status}</span>
+                    <span class="engine-progress-pct mono">{$engineUpdateProgress.progress}%</span>
+                  </div>
+                  <div class="engine-progress-track">
+                    <div
+                      class="engine-progress-fill"
+                      style="width: {$engineUpdateProgress.progress}%"
+                    ></div>
+                  </div>
+                  {#if $engineUpdateProgress.downloaded !== undefined}
+                    <div class="engine-progress-bytes mono">
+                      {fmtBytes($engineUpdateProgress.downloaded)}
+                      {#if $engineUpdateProgress.total}&nbsp;of {fmtBytes($engineUpdateProgress.total)}{/if}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+              <div class="about-row">
+                <span class="about-label">App</span>
+                <span class="about-value mono">Anon 0.1.2</span>
+              </div>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="General">
+            <div class="field-row">
+              <div class="field">
+                <label for="default-sort">Default sort</label>
+                <select id="default-sort" class="input-field" bind:value={localSettings.default_sort_field}>
+                  <option value={null}>Created date</option>
+                  <option value="name">Name</option>
+                  <option value="created_at">Created</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="sort-dir">Sort direction</label>
+                <select id="sort-dir" class="input-field" bind:value={localSettings.default_sort_dir}>
+                  <option value={null}>Default</option>
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </div>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Confirmations">
+            <div class="toggle-row">
+              <div class="toggle-info">
+                <span class="toggle-label">Skip wipe confirmation</span>
+                <span class="toggle-desc">Don't prompt when disabling data retention</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" bind:checked={localSettings.skip_wipe_confirmation} />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-info">
+                <span class="toggle-label">Skip delete confirmation</span>
+                <span class="toggle-desc">Don't prompt when deleting instances</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" bind:checked={localSettings.skip_delete_confirmation} />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Tags">
+            <TagManager bind:settings={localSettings} />
+          </SettingsSection>
+
+          <SettingsSection title="Paths">
+            <div class="field">
+              <label for="camoufox-path">Camoufox binary path</label>
+              <input
+                type="text"
+                id="camoufox-path"
+                class="input-field mono"
+                placeholder="Auto-detected"
+                bind:value={localSettings.camoufox_path}
+              />
+              <span class="field-hint">Leave empty for automatic detection</span>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Backup & Restore">
+            <div class="data-actions">
+              <button type="button" class="btn btn-sm" on:click={handleExportAll}>
+                Export all
+              </button>
+              <button type="button" class="btn btn-sm" on:click={handleImportClick}>
+                Import JSON
+              </button>
+              <input
+                type="file"
+                accept=".json"
+                bind:this={importFileInput}
+                on:change={handleImportFile}
+                style="display: none;"
+              />
+            </div>
+          </SettingsSection>
         {/if}
       </div>
 
       <div class="sp-footer">
-        <button class="btn" on:click={handleClose}>CANCEL</button>
-        <button class="btn btn-primary" on:click={handleSave}>SAVE</button>
+        <button class="btn btn-sm" on:click={handleClose}>Cancel</button>
+        <button class="btn btn-primary btn-sm" on:click={handleSave}>Save</button>
       </div>
     </div>
   </div>
@@ -255,11 +241,8 @@
 <style>
   .settings-backdrop {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.85);
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
@@ -269,189 +252,145 @@
 
   .settings-panel {
     width: calc(100% - 2rem);
-    max-width: 580px;
-    max-height: 85vh;
+    max-width: 520px;
+    max-height: 84vh;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--panel-border);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    background: var(--panel-bg);
+    border: 1px solid #2b2b30;
+    border-radius: var(--radius);
   }
 
   .sp-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1.5rem 2rem;
-    border-bottom: 1px solid var(--panel-border);
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--hairline);
     flex-shrink: 0;
   }
 
   .sp-header h3 {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
+    font-size: 14.5px;
+    font-weight: 500;
   }
 
-  .close-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-  }
-
-  .close-btn:hover {
-    color: var(--text-main);
+  .sp-header .close-btn {
+    font-size: 18px;
+    line-height: 1;
   }
 
   .sp-body {
     flex: 1;
     overflow-y: auto;
-    padding: 1rem 2rem;
+    padding: 4px 20px;
   }
 
   .sp-footer {
     display: flex;
     justify-content: flex-end;
-    gap: 0.75rem;
-    padding: 1.5rem 2rem;
-    border-top: 1px solid var(--panel-border);
+    gap: 8px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--hairline);
     flex-shrink: 0;
   }
 
   .field-row {
     display: flex;
-    gap: 0.75rem;
+    gap: 10px;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 5px;
     flex: 1;
   }
 
   .field label {
-    font-size: 0.6rem;
-    letter-spacing: 0.1em;
+    font-size: 11.5px;
     color: var(--text-muted);
-    text-transform: uppercase;
-  }
-
-  .input-field {
-    background: transparent;
-    border: 1px solid var(--panel-border);
-    color: var(--text-main);
-    font-family: inherit;
-    font-size: 0.7rem;
-    padding: 0.5rem 0.6rem;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-
-  .input-field:focus {
-    border-color: var(--text-main);
-  }
-
-  .input-field option {
-    background: #111111;
-    color: var(--text-main);
-  }
-
-  .mono {
-    font-family: "SF Mono", "Fira Code", "Roboto Mono", monospace;
   }
 
   .field-hint {
-    font-size: 0.55rem;
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
-    opacity: 0.7;
+    font-size: 11px;
+    color: var(--text-dim);
   }
 
   .toggle-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.5rem 0;
+    gap: 12px;
+    padding: 4px 0;
   }
 
   .toggle-info {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 2px;
   }
 
   .toggle-label {
-    font-size: 0.65rem;
-    letter-spacing: 0.08em;
+    font-size: 12.5px;
     color: var(--text-main);
   }
 
   .toggle-desc {
-    font-size: 0.55rem;
-    color: var(--text-muted);
-    letter-spacing: 0.03em;
+    font-size: 11.5px;
+    color: var(--text-dim);
   }
 
   .data-actions {
     display: flex;
-    gap: 0.75rem;
+    gap: 8px;
   }
 
   .about-info {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 12px;
   }
 
   .about-row {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .about-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .about-label {
-    font-size: 0.6rem;
+    font-size: 12px;
     color: var(--text-muted);
-    letter-spacing: 0.1em;
-    width: 80px;
   }
 
   .about-value {
-    font-size: 0.7rem;
+    font-size: 12.5px;
     color: var(--text-main);
-    letter-spacing: 0.05em;
-  }
-
-  .engine-update-btn {
-    margin-left: auto;
-  }
-
-  .engine-update-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   .engine-progress {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    padding-top: 0.4rem;
+    gap: 5px;
   }
 
   .engine-progress-row {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: 12px;
   }
 
   .engine-progress-status {
-    font-size: 0.6rem;
-    letter-spacing: 0.08em;
+    font-size: 11.5px;
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -460,9 +399,7 @@
 
   .engine-progress-pct,
   .engine-progress-bytes {
-    font-size: 0.6rem;
-    letter-spacing: 0.06em;
-    font-variant-numeric: tabular-nums;
+    font-size: 11px;
     color: var(--text-muted);
   }
 
@@ -474,13 +411,13 @@
   .engine-progress-track {
     width: 100%;
     height: 2px;
-    background: var(--panel-border);
+    background: #1f1f23;
     overflow: hidden;
   }
 
   .engine-progress-fill {
     height: 100%;
-    background: var(--text-main);
+    background: #ffffff;
     transition: width 0.2s ease;
   }
 </style>

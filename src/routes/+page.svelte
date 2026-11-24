@@ -1,21 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { 
-    checkInstallation, 
+  import {
+    checkInstallation,
     startDownload,
     createInstance,
-    camoufoxDownloaded, 
+    launchInstance,
+    stopInstance,
+    camoufoxDownloaded,
+    camoufoxVersion,
     installProgress,
     instances,
     runningInstances,
     settings,
+    showSettingsPage,
     bulkLaunch,
     bulkStop,
     bulkDelete,
-    addToast
   } from '$lib/store';
-  import type { InstanceConfig } from '$lib/store';
-  import { get } from 'svelte/store';
   import InstanceCard from '$lib/components/instance/InstanceCard.svelte';
   import ConfirmationModal from '$lib/components/instance/ConfirmationModal.svelte';
   import Modal from '$lib/components/ui/Modal.svelte';
@@ -24,32 +25,41 @@
   let newInstanceName = '';
   let newInstanceProxy = '';
   let newInstancePersistData = true;
-  let viewMode: 'grid' | 'list' = 'list';
   let nameError = '';
 
-  function fmtBytes(b: number) {
-    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
-    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
-    return (b / 1024).toFixed(0) + ' KB';
+  interface CmdItem {
+    id: string;
+    label: string;
+    detail: string;
+    tone?: 'warn';
+    run: () => void;
   }
 
-  // Sort state
+  let showCmd = false;
+  let cmdQuery = '';
+  let cmdActiveIndex = 0;
+  let cmdInput: HTMLInputElement;
+
   type SortField = 'name' | 'created_at';
   type SortDir = 'asc' | 'desc';
   let sortField: SortField = (localStorage.getItem('sort_field') as SortField) ?? 'created_at';
   let sortDir: SortDir = (localStorage.getItem('sort_dir') as SortDir) ?? 'desc';
 
-  // Filter state
   let searchQuery = '';
   let statusFilter: 'all' | 'running' | 'stopped' = 'all';
   let proxyFilter: 'all' | 'none' | 'http' | 'socks4' | 'socks5' = 'all';
-  let persistFilter: 'all' | 'on' | 'off' = 'all';
   let tagFilter = 'all';
 
-  // Bulk select state
   let selectMode = false;
   let selectedInstances: Set<string> = new Set();
   let showBulkDeleteConfirm = false;
+  let expandedId: string | null = null;
+
+  function fmtBytes(b: number): string {
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1024).toFixed(0) + ' KB';
+  }
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -62,89 +72,168 @@
     localStorage.setItem('sort_dir', sortDir);
   }
 
+  $: runningCount = $instances.filter((i) => $runningInstances.has(i.id)).length;
+
   $: sortedInstances = [...$instances].sort((a, b) => {
-    if (sortField === 'name') {
-      const cmp = a.name.localeCompare(b.name);
-      return sortDir === 'asc' ? cmp : -cmp;
-    } else {
-      const cmp = a.created_at - b.created_at;
-      return sortDir === 'asc' ? cmp : -cmp;
-    }
+    const cmp =
+      sortField === 'name' ? a.name.localeCompare(b.name) : a.created_at - b.created_at;
+    return sortDir === 'asc' ? cmp : -cmp;
   });
 
-  $: filteredInstances = sortedInstances.filter(i => {
-    // Name search
-    if (searchQuery && !i.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    // Status filter
+  $: filteredInstances = sortedInstances.filter((i) => {
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const hay = `${i.name} ${i.proxy_config?.host ?? i.proxy ?? ''} ${(i.tags ?? []).join(' ')}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     if (statusFilter === 'running' && !$runningInstances.has(i.id)) return false;
     if (statusFilter === 'stopped' && $runningInstances.has(i.id)) return false;
-    // Proxy type filter
     if (proxyFilter !== 'all') {
       const pt = i.proxy_config?.proxy_type ?? null;
-      if (proxyFilter === 'none' && pt) return false;
+      if (proxyFilter === 'none' && (pt || i.proxy)) return false;
       if (proxyFilter !== 'none' && pt !== proxyFilter) return false;
     }
-    // Persistence filter
-    if (persistFilter === 'on' && !i.persist_data) return false;
-    if (persistFilter === 'off' && i.persist_data) return false;
-    // Tag filter
-    if (tagFilter !== 'all') {
-      const tags = i.tags ?? [];
-      if (!tags.includes(tagFilter)) return false;
-    }
+    if (tagFilter !== 'all' && !(i.tags ?? []).includes(tagFilter)) return false;
     return true;
   });
 
-  $: allTags = ($settings.tag_definitions ?? []).map(t => t.label);
+  $: cmdItems = (() => {
+    const q = cmdQuery.trim().toLowerCase();
+    const list: CmdItem[] = sortedInstances.map((inst) => {
+      const running = $runningInstances.has(inst.id);
+      return {
+        id: `inst:${inst.id}`,
+        label: `${running ? 'Stop' : 'Launch'} ${inst.name}`,
+        detail: inst.proxy_config?.host ?? inst.proxy ?? 'Direct',
+        run: () => handleCmdToggle(inst.id),
+      };
+    });
+    list.push({
+      id: 'action:new',
+      label: 'New instance',
+      detail: 'Action',
+      run: () => {
+        showCmd = false;
+        showCreateModal = true;
+      },
+    });
+    if (runningCount > 0) {
+      list.push({
+        id: 'action:stop-all',
+        label: `Stop all running (${runningCount})`,
+        detail: 'Action',
+        tone: 'warn',
+        run: handleStopAllRunning,
+      });
+    }
+    list.push({
+      id: 'action:settings',
+      label: 'Engine & Settings',
+      detail: $camoufoxVersion,
+      run: () => {
+        showCmd = false;
+        showSettingsPage.set(true);
+      },
+    });
+    return q ? list.filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(q)) : list;
+  })();
+
+  $: if (cmdActiveIndex >= cmdItems.length) {
+    cmdActiveIndex = Math.max(0, cmdItems.length - 1);
+  }
+
+  $: sortValue = `${sortField}:${sortDir}`;
+
+  function handleSortSelect(e: Event) {
+    const [field, dir] = (e.currentTarget as HTMLSelectElement).value.split(':') as [SortField, SortDir];
+    sortField = field;
+    sortDir = dir;
+    localStorage.setItem('sort_field', sortField);
+    localStorage.setItem('sort_dir', sortDir);
+  }
+
+  $: allTags = ($settings.tag_definitions ?? []).map((t) => t.label);
+  $: hasActiveFilters =
+    !!searchQuery.trim() || statusFilter !== 'all' || proxyFilter !== 'all' || tagFilter !== 'all';
 
   $: if (newInstanceName) nameError = '';
+  $: if (!selectMode && selectedInstances.size > 0) selectedInstances = new Set();
 
-  // Reset selection when exiting select mode
-  $: if (!selectMode) selectedInstances = new Set();
+  function openCmd() {
+    showCmd = true;
+    cmdQuery = '';
+    cmdActiveIndex = 0;
+    setTimeout(() => cmdInput?.focus(), 0);
+  }
+
+  function handleCmdKeydown(e: KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (cmdItems.length > 0) cmdActiveIndex = (cmdActiveIndex + 1) % cmdItems.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (cmdItems.length > 0) {
+        cmdActiveIndex = (cmdActiveIndex - 1 + cmdItems.length) % cmdItems.length;
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      cmdItems[cmdActiveIndex]?.run();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      showCmd = false;
+    }
+  }
 
   onMount(() => {
     checkInstallation();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!$camoufoxDownloaded) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (showCmd) showCmd = false;
+        else openCmd();
+      } else if (e.key === 'Escape' && showCmd) {
+        showCmd = false;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   });
 
   async function handleCreate(e: Event) {
     e.preventDefault();
-    const name = newInstanceName.trim();
-    if (!name) return;
-
-    // Frontend validation
-    const currentInstances = get(instances);
-    if (currentInstances.some(i => i.name.toLowerCase() === name.toLowerCase())) {
-      nameError = 'AN INSTANCE WITH THIS NAME ALREADY EXISTS';
+    const trimmed = newInstanceName.trim();
+    if (!trimmed) {
+      nameError = 'Name cannot be empty';
       return;
     }
-    
-    try {
-      await createInstance(
-        name, 
-        newInstanceProxy.trim() || undefined,
-        newInstancePersistData
-      );
-      newInstanceName = '';
-      newInstanceProxy = '';
-      newInstancePersistData = true;
-      showCreateModal = false;
-    } catch (error) {
-      nameError = 'FAILED TO CREATE INSTANCE';
+    if ($instances.some((i) => i.name.toLowerCase() === trimmed.toLowerCase())) {
+      nameError = 'An instance with this name already exists';
+      return;
     }
+    await createInstance(trimmed, newInstanceProxy.trim() || undefined, newInstancePersistData);
+    newInstanceName = '';
+    newInstanceProxy = '';
+    newInstancePersistData = true;
+    nameError = '';
+    showCreateModal = false;
   }
 
-  function handleInstanceSelect(e: CustomEvent) {
+  function handleInstanceSelect(e: CustomEvent<string>) {
     const id = e.detail;
-    selectedInstances = new Set(selectedInstances);
-    if (selectedInstances.has(id)) {
-      selectedInstances.delete(id);
-    } else {
-      selectedInstances.add(id);
-    }
+    const next = new Set(selectedInstances);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedInstances = next;
+  }
+
+  function handleToggleExpand(e: CustomEvent<string>) {
+    expandedId = expandedId === e.detail ? null : e.detail;
   }
 
   function selectAll() {
-    selectedInstances = new Set(filteredInstances.map(i => i.id));
+    selectedInstances = new Set(filteredInstances.map((i) => i.id));
   }
 
   function deselectAll() {
@@ -152,32 +241,13 @@
   }
 
   async function handleBulkLaunch() {
-    const stoppedIds = [...selectedInstances].filter(id => !$runningInstances.has(id));
-    if (stoppedIds.length === 0) {
-      addToast('All selected instances are already running', 'info');
-      return;
-    }
-    await bulkLaunch(stoppedIds);
+    await bulkLaunch([...selectedInstances]);
+    selectedInstances = new Set();
   }
 
   async function handleBulkStop() {
-    const runningIds = [...selectedInstances].filter(id => $runningInstances.has(id));
-    if (runningIds.length === 0) {
-      addToast('No selected instances are running', 'info');
-      return;
-    }
-    await bulkStop(runningIds);
-  }
-
-  function handleBulkDeleteRequest() {
-    if (selectedInstances.size === 0) return;
-    // Check if any are running
-    const runningIds = [...selectedInstances].filter(id => $runningInstances.has(id));
-    if (runningIds.length > 0) {
-      addToast('Stop running instances before deleting', 'warning');
-      return;
-    }
-    showBulkDeleteConfirm = true;
+    await bulkStop([...selectedInstances]);
+    selectedInstances = new Set();
   }
 
   async function confirmBulkDelete() {
@@ -186,214 +256,322 @@
     showBulkDeleteConfirm = false;
   }
 
-  $: hasActiveFilters = searchQuery || statusFilter !== 'all' || proxyFilter !== 'all' || persistFilter !== 'all' || tagFilter !== 'all';
+  async function handleCmdToggle(id: string) {
+    showCmd = false;
+    try {
+      if ($runningInstances.has(id)) {
+        await stopInstance(id);
+      } else {
+        await launchInstance(id);
+      }
+    } catch {
+      // Toasted in store
+    }
+  }
+
+  async function handleStopAllRunning() {
+    showCmd = false;
+    await bulkStop([...$runningInstances]);
+  }
+
+  function clearFilters() {
+    searchQuery = '';
+    statusFilter = 'all';
+    proxyFilter = 'all';
+    tagFilter = 'all';
+  }
 </script>
 
 {#if $camoufoxDownloaded === null}
-  <div class="loading-state">
-    <svg class="spinner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-    <p>CHECKING SYSTEM</p>
+  <div class="setup-shell">
+    <div class="loading-state">
+      <svg class="spinner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+        <circle cx="12" cy="12" r="9" opacity="0.25" />
+        <path d="M12 3a9 9 0 0 1 9 9" />
+      </svg>
+      <span>Checking engine…</span>
+    </div>
   </div>
 {:else if !$camoufoxDownloaded}
-  <div class="setup-view bento-panel">
-    <div class="setup-icon">
-      <svg class="glitch-triangle" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-        <polygon points="12 2 2 22 22 22 12 2"/>
-        <polygon points="12 22 7 12 17 12 12 22"/>
-      </svg>
-    </div>
-    <h2>WELCOME TO ANON BROWSER</h2>
-    <p class="description">
-      ANON BROWSER USES AN ISOLATED ENGINE. INSTALL REQUIRED.
-    </p>
+  <div class="setup-shell">
+    <header class="top-bar">
+      <div class="brand">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <polygon points="12 2 2 22 22 22 12 2" />
+          <polygon points="12 22 7 12 17 12 12 22" />
+        </svg>
+        <span>Anon</span>
+      </div>
+    </header>
 
-    {#if $installProgress}
-      <div class="progress-container">
-        <div class="progress-row">
-          <div class="progress-status">{$installProgress.status.toUpperCase()}</div>
-          {#if $installProgress.downloaded && $installProgress.total}
-            <div class="progress-pct">{Math.round(($installProgress.downloaded / $installProgress.total) * 100)}%</div>
-          {/if}
-        </div>
-        <div class="progress-bar-wrapper">
-          <div class="progress-bar" style="width: {$installProgress.progress}%"></div>
-        </div>
-        {#if $installProgress.downloaded !== undefined}
-          <div class="progress-bytes">
-            {fmtBytes($installProgress.downloaded)}
-            {#if $installProgress.total}&nbsp;of {fmtBytes($installProgress.total)}{/if}
+    <div class="setup-body">
+      <div class="setup-card">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
+          <polygon points="12 2 2 22 22 22 12 2" />
+          <polygon points="12 22 7 12 17 12 12 22" />
+        </svg>
+        <h2>Install Camoufox engine</h2>
+        <p class="setup-desc">
+          Anon launches isolated browser profiles using Camoufox. Download the latest Windows binary to get started.
+        </p>
+
+        {#if $installProgress}
+          <div class="progress-block">
+            <div class="progress-row">
+              <span class="progress-status">{$installProgress.status}</span>
+              <span class="progress-pct mono">{$installProgress.progress}%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" style="width: {$installProgress.progress}%"></div>
+            </div>
+            {#if $installProgress.downloaded !== undefined}
+              <div class="progress-bytes mono">
+                {fmtBytes($installProgress.downloaded)}
+                {#if $installProgress.total}&nbsp;of {fmtBytes($installProgress.total)}{/if}
+              </div>
+            {/if}
           </div>
-        {/if}
-      </div>
-    {:else}
-      <button class="btn btn-primary btn-large" on:click={startDownload}>
-        DOWNLOAD ENGINE
-      </button>
-    {/if}
-  </div>
-{:else}
-  <div class="dashboard">
-    <div class="dashboard-header">
-      <h2>INSTANCES</h2>
-      <div class="header-actions">
-        <button 
-          class="view-toggle" 
-          class:toggle-active={selectMode}
-          aria-label="Toggle selection mode"
-          on:click={() => selectMode = !selectMode}
-          title="Multi-select"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="6.5" x2="21" y2="6.5"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>
-        </button>
-        <button 
-          class="view-toggle" 
-          aria-label="Toggle view mode"
-          on:click={() => viewMode = viewMode === 'grid' ? 'list' : 'grid'}
-        >
-          {#if viewMode === 'grid'}
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-          {:else}
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" shape-rendering="crispEdges"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>
-          {/if}
-        </button>
-        <button class="btn btn-primary" on:click={() => showCreateModal = true}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          NEW INSTANCE
-        </button>
-      </div>
-    </div>
-
-    <!-- Filter Bar -->
-    <div class="filter-bar">
-      <div class="search-input-wrapper">
-        <svg class="search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input 
-          type="text" 
-          class="search-input" 
-          placeholder="SEARCH..." 
-          bind:value={searchQuery}
-        />
-        {#if searchQuery}
-          <button class="search-clear" on:click={() => searchQuery = ''} aria-label="Clear search">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        {:else}
+          <button class="btn btn-primary" on:click={startDownload}>
+            Download engine
           </button>
         {/if}
       </div>
-      <select class="filter-select" bind:value={statusFilter}>
-        <option value="all">ALL STATUS</option>
-        <option value="running">RUNNING</option>
-        <option value="stopped">STOPPED</option>
+    </div>
+  </div>
+{:else}
+  <header class="top-bar">
+    <div class="brand">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <polygon points="12 2 2 22 22 22 12 2" />
+        <polygon points="12 22 7 12 17 12 12 22" />
+      </svg>
+      <span>Anon</span>
+    </div>
+
+    <div class="head-right">
+      <div class="search-box">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Filter profiles..."
+          aria-label="Filter profiles"
+          bind:value={searchQuery}
+        />
+        {#if searchQuery}
+          <button class="clear-btn" aria-label="Clear filter" on:click={() => (searchQuery = '')}>×</button>
+        {/if}
+      </div>
+
+      <button class="kbd-btn" title="Quick command (Ctrl+K)" on:click={openCmd}>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      <button
+        class="icon-btn"
+        aria-label="Settings"
+        title="Settings & Engine"
+        on:click={() => showSettingsPage.set(true)}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z" />
+        </svg>
+      </button>
+
+      <button class="btn btn-primary top-cta" on:click={() => (showCreateModal = true)}>
+        New instance
+      </button>
+    </div>
+  </header>
+
+  <div class="subbar">
+    <div class="tabs" role="tablist">
+      <button
+        role="tab"
+        aria-selected={statusFilter === 'all'}
+        class:active={statusFilter === 'all'}
+        on:click={() => (statusFilter = 'all')}
+      >
+        All <span class="cnt">{$instances.length}</span>
+      </button>
+      <button
+        role="tab"
+        aria-selected={statusFilter === 'running'}
+        class:active={statusFilter === 'running'}
+        on:click={() => (statusFilter = 'running')}
+      >
+        Running <span class="cnt">{runningCount}</span>
+      </button>
+      <button
+        role="tab"
+        aria-selected={statusFilter === 'stopped'}
+        class:active={statusFilter === 'stopped'}
+        on:click={() => (statusFilter = 'stopped')}
+      >
+        Stopped <span class="cnt">{$instances.length - runningCount}</span>
+      </button>
+    </div>
+
+    <div class="filters">
+      {#if selectMode && selectedInstances.size > 0}
+        <div class="bulk-strip">
+          <span>{selectedInstances.size} selected</span>
+          <button on:click={selectAll}>All</button>
+          <button on:click={deselectAll}>None</button>
+          <button on:click={handleBulkLaunch}>Launch</button>
+          <button class="warn" on:click={handleBulkStop}>Stop</button>
+          <button class="danger" on:click={() => (showBulkDeleteConfirm = true)}>Delete</button>
+        </div>
+      {/if}
+
+      <select class="quiet-select" aria-label="Filter by proxy" bind:value={proxyFilter}>
+        <option value="all">Proxy: All</option>
+        <option value="socks5">Proxy: SOCKS5</option>
+        <option value="socks4">Proxy: SOCKS4</option>
+        <option value="http">Proxy: HTTP</option>
+        <option value="none">Proxy: Direct</option>
       </select>
-      <select class="filter-select" bind:value={proxyFilter}>
-        <option value="all">ALL PROXY</option>
-        <option value="none">NO PROXY</option>
-        <option value="http">HTTP</option>
-        <option value="socks4">SOCKS4</option>
-        <option value="socks5">SOCKS5</option>
-      </select>
-      <select class="filter-select" bind:value={persistFilter}>
-        <option value="all">ALL DATA</option>
-        <option value="on">RETAINING</option>
-        <option value="off">WIPING</option>
-      </select>
+
       {#if allTags.length > 0}
-        <select class="filter-select" bind:value={tagFilter}>
-          <option value="all">ALL TAGS</option>
+        <select class="quiet-select" aria-label="Filter by tag" bind:value={tagFilter}>
+          <option value="all">Tag: All</option>
           {#each allTags as tag}
-            <option value={tag}>{tag.toUpperCase()}</option>
+            <option value={tag}>Tag: {tag}</option>
           {/each}
         </select>
       {/if}
-      <span class="instance-count">
-        {filteredInstances.length} OF {$instances.length}
-      </span>
+
+      <select
+        class="quiet-select"
+        aria-label="Sort instances"
+        value={sortValue}
+        on:change={handleSortSelect}
+      >
+        <option value="created_at:desc">Sort: Newest</option>
+        <option value="created_at:asc">Sort: Oldest</option>
+        <option value="name:asc">Sort: Name A–Z</option>
+        <option value="name:desc">Sort: Name Z–A</option>
+      </select>
+
+      <button
+        class="text-toggle"
+        class:active={selectMode}
+        on:click={() => (selectMode = !selectMode)}
+      >
+        Select
+      </button>
     </div>
+  </div>
 
-    {#if $instances.length === 0}
-      <div class="empty-state bento-panel">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="18" height="18"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-        <p>NO INSTANCES FOUND</p>
-      </div>
-    {:else if filteredInstances.length === 0}
-      <div class="empty-state bento-panel">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <p>NO MATCHING INSTANCES</p>
-        {#if hasActiveFilters}
-          <button class="btn btn-sm" on:click={() => { searchQuery = ''; statusFilter = 'all'; proxyFilter = 'all'; persistFilter = 'all'; tagFilter = 'all'; }}>CLEAR FILTERS</button>
-        {/if}
-      </div>
-    {:else}
-      <div class={viewMode === 'grid' ? 'instances-grid' : 'instances-list'}>
-        {#if viewMode === 'list'}
-          <div class="list-header">
-            {#if selectMode}
-              <span class="col-checkbox"></span>
-            {/if}
-            <button
-              class="col-name sort-btn"
-              class:sort-active={sortField === 'name'}
-              on:click={() => toggleSort('name')}
-            >
-              NAME
-              <span class="sort-arrow">{sortField === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
-            </button>
-            <span class="col-proxy">PROXY</span>
-            <span class="col-setting">RETAIN DATA</span>
-            <button
-              class="col-date sort-btn"
-              class:sort-active={sortField === 'created_at'}
-              on:click={() => toggleSort('created_at')}
-            >
-              CREATED
-              <span class="sort-arrow">{sortField === 'created_at' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
-            </button>
-            <span class="col-actions">ACTIONS</span>
-          </div>
-        {/if}
-        {#each filteredInstances as instance (instance.id)}
-          <InstanceCard 
-            {instance} 
-            compact={viewMode === 'list'} 
-            selectable={selectMode}
-            selected={selectedInstances.has(instance.id)}
-            on:select={handleInstanceSelect}
-          />
-        {/each}
-      </div>
-    {/if}
-
-    <!-- Bulk action bar -->
-    {#if selectMode && selectedInstances.size > 0}
-      <div class="bulk-bar bento-panel">
-        <span class="bulk-count">{selectedInstances.size} SELECTED</span>
-        <div class="bulk-actions">
-          <button class="btn btn-sm" on:click={selectAll}>ALL</button>
-          <button class="btn btn-sm" on:click={deselectAll}>NONE</button>
-          <button class="btn btn-primary btn-sm" on:click={handleBulkLaunch}>LAUNCH ALL</button>
-          <button class="btn btn-stop btn-sm" on:click={handleBulkStop}>STOP ALL</button>
-          <button class="btn btn-danger btn-sm" on:click={handleBulkDeleteRequest}>DELETE ALL</button>
+  <main class="table-main">
+    <div class="table-shell">
+      {#if $instances.length === 0}
+        <div class="empty-state">
+          <p>No browser instances yet.</p>
+          <button class="btn btn-primary btn-sm" on:click={() => (showCreateModal = true)}>
+            New instance
+          </button>
         </div>
+      {:else if filteredInstances.length === 0}
+        <div class="empty-state">
+          <p>No profiles match your filter.</p>
+          {#if hasActiveFilters}
+            <button class="btn btn-sm" on:click={clearFilters}>Clear filters</button>
+          {/if}
+        </div>
+      {:else}
+        <div class="thead" class:selectable={selectMode}>
+          {#if selectMode}<span></span>{/if}
+          <button class="sort-head" on:click={() => toggleSort('name')}>
+            Name
+            {#if sortField === 'name'}
+              <span class="sort-mark">{sortDir === 'asc' ? '↑' : '↓'}</span>
+            {/if}
+          </button>
+          <span>Proxy</span>
+          <span>Fingerprint</span>
+          <span>Data</span>
+          <span class="right">Action</span>
+        </div>
+
+        <div class="tbody">
+          {#each filteredInstances as instance (instance.id)}
+            <InstanceCard
+              {instance}
+              selectable={selectMode}
+              selected={selectedInstances.has(instance.id)}
+              expanded={expandedId === instance.id}
+              on:select={handleInstanceSelect}
+              on:toggleExpand={handleToggleExpand}
+            />
+          {/each}
+        </div>
+      {/if}
+    </div>
+  </main>
+{/if}
+
+{#if showCmd}
+  <div class="cmd-backdrop" on:click|self={() => (showCmd = false)} role="presentation">
+    <div
+      class="cmd-box"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Quick command palette"
+      tabindex="-1"
+    >
+      <input
+        class="cmd-input"
+        type="text"
+        aria-label="Search profiles and commands"
+        placeholder="Jump to profile or action..."
+        bind:this={cmdInput}
+        bind:value={cmdQuery}
+        on:input={() => (cmdActiveIndex = 0)}
+        on:keydown={handleCmdKeydown}
+      />
+      <div class="cmd-list" role="listbox">
+        {#each cmdItems as item, idx (item.id)}
+          <button
+            class="cmd-item"
+            class:active={idx === cmdActiveIndex}
+            role="option"
+            aria-selected={idx === cmdActiveIndex}
+            on:mouseenter={() => (cmdActiveIndex = idx)}
+            on:click={item.run}
+          >
+            <span>{item.label}</span>
+            <span class="cmd-meta mono" class:warn={item.tone === 'warn'}>{item.detail}</span>
+          </button>
+        {/each}
+        {#if cmdItems.length === 0}
+          <div class="cmd-empty">No matching profiles or actions.</div>
+        {/if}
       </div>
-    {/if}
+    </div>
   </div>
 {/if}
 
-<Modal show={showCreateModal} on:close={() => showCreateModal = false}>
-  <div class="modal-header">
-    <h3>NEW INSTANCE</h3>
-    <button class="close-btn" aria-label="Close modal" on:click={() => showCreateModal = false}>
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+<Modal show={showCreateModal} maxWidth="410px" ariaLabel="New instance" on:close={() => (showCreateModal = false)}>
+  <div class="modal-head">
+    <h3>New instance</h3>
+    <button class="close-btn" aria-label="Close modal" on:click={() => (showCreateModal = false)}>
+      ×
     </button>
   </div>
-  <form on:submit={handleCreate}>
-    <div class="form-group">
-      <label for="name">NAME</label>
-      <input 
-        type="text" 
-        id="name" 
-        bind:value={newInstanceName} 
-        placeholder="E.G. WORK" 
-        required 
+  <form class="create-form" on:submit={handleCreate}>
+    <div class="field">
+      <label for="new-inst-name">Name</label>
+      <input
+        type="text"
+        id="new-inst-name"
+        bind:value={newInstanceName}
+        placeholder="e.g. Frankfurt Staging"
+        required
         class="input-field"
         class:input-error={!!nameError}
       />
@@ -401,509 +579,597 @@
         <span class="error-text">{nameError}</span>
       {/if}
     </div>
-    <div class="form-group">
-      <label for="proxy">PROXY</label>
-      <input 
-        type="text" 
-        id="proxy" 
-        bind:value={newInstanceProxy} 
-        placeholder="OPTIONAL" 
-        class="input-field"
+    <div class="field">
+      <label for="new-inst-proxy">Proxy</label>
+      <input
+        type="text"
+        id="new-inst-proxy"
+        bind:value={newInstanceProxy}
+        placeholder="Optional (socks5://host:port)"
+        class="input-field mono"
       />
     </div>
-    <div class="form-group row-group">
-      <div class="label-group">
-        <label for="persist">RETAIN DATA</label>
-        <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="persist" bind:checked={newInstancePersistData}>
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="modal-actions">
-      <button type="button" class="btn" on:click={() => showCreateModal = false}>CANCEL</button>
-      <button type="submit" class="btn btn-primary" disabled={!newInstanceName.trim()}>CREATE</button>
+    <label class="persist-row">
+      <input type="checkbox" bind:checked={newInstancePersistData} />
+      <span>Retain cookies, logins, and history</span>
+    </label>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-sm" on:click={() => (showCreateModal = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn btn-primary btn-sm" disabled={!newInstanceName.trim()}>
+        Create
+      </button>
     </div>
   </form>
 </Modal>
 
 <ConfirmationModal
   show={showBulkDeleteConfirm}
-  title="DELETE {selectedInstances.size} INSTANCE{selectedInstances.size > 1 ? 'S' : ''}?"
-  message="THIS WILL PERMANENTLY DELETE ALL SELECTED INSTANCES AND THEIR DATA. THIS ACTION CANNOT BE UNDONE."
-  confirmText="DELETE ALL"
+  title="Delete selected instances"
+  message={`Permanently delete ${selectedInstances.size} selected instance(s)? Running instances will be skipped.`}
+  confirmText="Delete selected"
   danger={true}
   on:confirm={confirmBulkDelete}
-  on:cancel={() => showBulkDeleteConfirm = false}
+  on:cancel={() => (showBulkDeleteConfirm = false)}
 />
 
 <style>
+  .setup-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    background: var(--bg-color);
+  }
+
   .loading-state {
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    gap: 12px;
     color: var(--text-muted);
-    gap: 1.5rem;
-    font-size: 0.8rem;
-    letter-spacing: 0.1em;
+    font-size: 13px;
   }
 
   .spinner-icon {
-    width: 32px;
-    height: 32px;
-    animation: spin 2s linear infinite;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
   }
 
-  .setup-view {
-    max-width: 500px;
-    margin: 4rem auto;
-    padding: 3rem;
-    text-align: center;
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .setup-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .setup-card {
+    width: 100%;
+    max-width: 420px;
+    padding: 32px 28px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2rem;
+    text-align: center;
+    gap: 14px;
   }
 
-  .setup-view h2 {
-    font-size: 1.25rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-    margin: 0;
+  .setup-card h2 {
+    font-size: 16px;
+    font-weight: 500;
+    color: #ffffff;
   }
 
-  .description {
+  .setup-desc {
+    font-size: 12.5px;
     color: var(--text-muted);
-    line-height: 1.6;
-    margin: 0;
-    font-size: 0.85rem;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    line-height: 1.5;
   }
 
-  .btn-large {
-    padding: 0.75rem 2rem;
-  }
-
-  .progress-container {
+  .progress-block {
     width: 100%;
-    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
   }
 
   .progress-row {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    gap: 1rem;
-    margin-bottom: 0.5rem;
+    gap: 12px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
   }
 
   .progress-status {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    text-align: left;
-    letter-spacing: 0.1em;
-    overflow-wrap: anywhere;
-  }
-
-  .progress-pct,
-  .progress-bytes {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .progress-pct {
-    color: var(--text-main);
+  .progress-track {
+    width: 100%;
+    height: 2px;
+    background: #1f1f23;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: #ffffff;
+    transition: width 0.2s ease;
   }
 
   .progress-bytes {
-    margin-top: 0.5rem;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
   }
 
-  .progress-bar-wrapper {
-    height: 1px;
-    background: var(--panel-border);
-    width: 100%;
-  }
-
-  .progress-bar {
-    height: 100%;
-    background: var(--text-main);
-    transition: width 0.3s ease;
-  }
-
-  .dashboard {
+  .top-bar {
+    height: 52px;
+    padding: 0 24px;
     display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .dashboard-header {
-    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--panel-border);
+    gap: 16px;
+    border-bottom: 1px solid #1c1c1f;
+    background: #000000;
+    flex-shrink: 0;
   }
 
-  .dashboard-header h2 {
-    font-weight: 400;
-    font-size: 1rem;
-    letter-spacing: 0.1em;
-    margin: 0;
-  }
-
-  .empty-state {
-    padding: 4rem 2rem;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1.5rem;
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    letter-spacing: 0.1em;
-  }
-
-  .instances-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 2rem;
-  }
-
-  .instances-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .list-header {
+  .brand {
     display: flex;
     align-items: center;
-    gap: 2rem;
-    padding: 0 1.25rem 0.5rem 1.25rem;
-    color: var(--text-muted);
-    font-size: 0.65rem;
-    letter-spacing: 0.1em;
-    border-bottom: 1px solid var(--panel-border);
-    margin-bottom: 0.5rem;
+    gap: 9px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: #ffffff;
   }
 
-  .col-checkbox { width: 20px; }
-  .col-name { flex: 1; padding-left: 14px; }
-  .col-proxy { width: 200px; }
-  .col-setting { width: 80px; text-align: center; }
-  .col-date { width: 100px; text-align: left; }
-  .col-actions { width: 240px; text-align: right; }
+  .head-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 
-  .sort-btn {
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 230px;
+    height: 30px;
+    padding: 0 9px;
+    border-radius: var(--radius);
+    background: #080809;
+    border: 1px solid var(--panel-border);
+    color: #737373;
+    transition: border-color 0.14s ease;
+  }
+
+  .search-box:focus-within {
+    border-color: #ffffff;
+    color: #ffffff;
+  }
+
+  .search-box input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 12.5px;
+    outline: none;
+  }
+
+  .search-box input::placeholder {
+    color: #59595e;
+  }
+
+  .clear-btn {
     background: none;
     border: none;
-    color: var(--text-muted);
+    color: #737373;
+    font-size: 16px;
+    line-height: 1;
     cursor: pointer;
-    font-family: inherit;
-    font-size: 0.65rem;
-    letter-spacing: 0.1em;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    transition: color 0.15s ease;
-    text-transform: uppercase;
+    padding: 0 2px;
   }
 
-  .sort-btn:hover {
-    color: var(--text-main);
+  .clear-btn:hover {
+    color: #ffffff;
   }
 
-  .sort-btn.sort-active {
-    color: var(--text-main);
-  }
-
-  .sort-arrow {
-    font-size: 0.6rem;
-    opacity: 0.6;
-  }
-
-  .sort-btn.sort-active .sort-arrow {
-    opacity: 1;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .view-toggle {
-    background: none;
+  .kbd-btn {
+    height: 30px;
+    padding: 0 8px;
+    border-radius: var(--radius);
+    background: #000000;
     border: 1px solid var(--panel-border);
     color: var(--text-muted);
     cursor: pointer;
-    padding: 0.45rem;
+    transition: border-color 0.14s, color 0.14s;
+  }
+
+  .kbd-btn:hover {
+    border-color: #66666e;
+    color: #ffffff;
+  }
+
+  .kbd-btn kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  .icon-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius);
+    background: #000000;
+    border: 1px solid var(--panel-border);
+    color: #9b9ba1;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    cursor: pointer;
+    transition: border-color 0.14s, color 0.14s;
   }
 
-  .view-toggle:hover {
-    border-color: var(--text-main);
-    color: var(--text-main);
+  .icon-btn:hover {
+    border-color: #66666e;
+    color: #ffffff;
   }
 
-  .view-toggle.toggle-active {
-    border-color: var(--text-main);
-    color: var(--text-main);
-    background: rgba(255, 255, 255, 0.05);
+  .top-cta {
+    height: 30px;
+    padding: 0 13px;
+    font-size: 12px;
   }
 
-  /* Filter bar */
-  .filter-bar {
+  .subbar {
+    height: 42px;
+    padding: 0 24px;
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid var(--hairline);
+    flex-shrink: 0;
   }
 
-  .search-input-wrapper {
-    position: relative;
-    flex: 1;
-    min-width: 150px;
-    max-width: 250px;
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    height: 100%;
   }
 
-  .search-icon {
-    position: absolute;
-    left: 0.6rem;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--text-muted);
-    pointer-events: none;
-  }
-
-  .search-input {
-    width: 100%;
-    background: transparent;
-    border: 1px solid var(--panel-border);
-    color: var(--text-main);
-    font-family: inherit;
-    font-size: 0.7rem;
-    letter-spacing: 0.05em;
-    padding: 0.45rem 1.8rem 0.45rem 1.8rem;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-
-  .search-input::placeholder {
-    color: var(--text-muted);
-  }
-
-  .search-input:focus {
-    border-color: var(--text-main);
-  }
-
-  .search-clear {
-    position: absolute;
-    right: 0.4rem;
-    top: 50%;
-    transform: translateY(-50%);
+  .tabs button {
+    height: 100%;
     background: none;
     border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0.2rem;
-    display: flex;
-  }
-
-  .search-clear:hover {
-    color: var(--text-main);
-  }
-
-  .filter-select {
-    background: transparent;
-    border: 1px solid var(--panel-border);
-    color: var(--text-muted);
+    border-bottom: 1.5px solid transparent;
+    color: #737373;
     font-family: inherit;
-    font-size: 0.65rem;
-    letter-spacing: 0.05em;
-    padding: 0.45rem 0.5rem;
-    outline: none;
+    font-size: 12.5px;
     cursor: pointer;
-    transition: border-color 0.2s;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    transition: color 0.14s;
   }
 
-  .filter-select:focus {
-    border-color: var(--text-main);
-    color: var(--text-main);
+  .tabs button:hover {
+    color: var(--text-secondary);
   }
 
-  .filter-select option {
-    background: #111111;
-    color: var(--text-main);
+  .tabs button.active {
+    color: #ffffff;
+    border-bottom-color: #ffffff;
   }
 
-  .instance-count {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    letter-spacing: 0.1em;
-    margin-left: auto;
-    white-space: nowrap;
+  .cnt {
+    font-size: 11px;
+    color: #59595e;
+    font-variant-numeric: tabular-nums;
   }
 
-  /* Bulk action bar */
-  .bulk-bar {
-    position: fixed;
-    bottom: 1.5rem;
-    left: 50%;
-    transform: translateX(-50%);
+  .tabs button.active .cnt {
+    color: #a1a1aa;
+  }
+
+  .filters {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
-    padding: 0.75rem 1.5rem;
-    z-index: 100;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
-    border: 1px solid var(--text-muted);
+    gap: 12px;
   }
 
-  .bulk-count {
-    font-size: 0.7rem;
-    letter-spacing: 0.1em;
-    color: var(--text-main);
-    white-space: nowrap;
-  }
-
-  .bulk-actions {
+  .bulk-strip {
     display: flex;
-    gap: 0.5rem;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: #a1a1aa;
+    padding-right: 12px;
+    border-right: 1px solid var(--panel-border);
   }
 
-  .btn-stop {
-    border-color: var(--accent-warning);
+  .bulk-strip button {
+    background: none;
+    border: none;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .bulk-strip button:hover {
+    text-decoration: underline;
+  }
+
+  .bulk-strip button.warn {
     color: var(--accent-warning);
   }
 
-  .btn-stop:hover {
-    background: var(--accent-warning);
-    color: var(--text-inverse);
+  .bulk-strip button.danger {
+    color: var(--accent-danger);
   }
 
-  .btn-sm {
-    padding: 0.3rem 0.75rem;
-    font-size: 0.65rem;
+  .quiet-select {
+    background: transparent;
+    border: none;
+    color: #9b9ba1;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 2px;
+    outline: none;
   }
 
-  .modal-header {
+  .quiet-select:hover {
+    color: #ffffff;
+  }
+
+  .quiet-select option {
+    background: var(--panel-bg);
+    color: #ffffff;
+  }
+
+  .text-toggle {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 3px 8px;
+    cursor: pointer;
+  }
+
+  .text-toggle:hover {
+    color: #ffffff;
+  }
+
+  .text-toggle.active {
+    border-color: var(--border-hover);
+    color: #ffffff;
+  }
+
+  .table-main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 24px 40px;
+  }
+
+  .table-shell {
+    max-width: 1240px;
+    margin: 0 auto;
+  }
+
+  .thead {
+    display: grid;
+    grid-template-columns: 1.5fr 1.4fr 1fr 84px 96px;
+    align-items: center;
+    gap: 16px;
+    padding: 0 12px;
+    height: 34px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--hairline-strong);
+  }
+
+  .thead.selectable {
+    grid-template-columns: 26px 1.5fr 1.4fr 1fr 84px 96px;
+  }
+
+  .thead .right {
+    text-align: right;
+  }
+
+  .sort-head {
+    background: none;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    letter-spacing: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    padding: 0;
+    justify-self: start;
+  }
+
+  .sort-head:hover {
+    color: var(--text-secondary);
+  }
+
+  .sort-mark {
+    color: #ffffff;
+  }
+
+  .empty-state {
+    padding: 64px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .cmd-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 14vh;
+    z-index: 4000;
+  }
+
+  .cmd-box {
+    width: 480px;
+    max-width: calc(100% - 32px);
+    background: var(--panel-bg);
+    border: 1px solid #2f2f35;
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .cmd-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #1e1e22;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 13.5px;
+    padding: 13px 16px;
+    outline: none;
+  }
+
+  .cmd-list {
+    max-height: 290px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cmd-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-  }
-
-  .close-btn {
-    background: none;
+    gap: 12px;
+    background: transparent;
     border: none;
-    color: var(--text-muted);
+    border-bottom: 1px solid #141417;
+    color: #e4e4e7;
+    font-family: inherit;
+    font-size: 12.5px;
+    padding: 9px 16px;
     cursor: pointer;
-    padding: 0;
-    display: flex;
-  }
-  
-  .close-btn:hover {
-    color: var(--text-main);
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
     text-align: left;
   }
 
-  .form-group label {
-    font-size: 0.75rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
+  .cmd-item:hover,
+  .cmd-item.active {
+    background: #121215;
+    color: #ffffff;
+  }
+
+  .cmd-empty {
+    padding: 14px 16px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .cmd-meta {
+    font-size: 11.5px;
+    color: #737373;
+  }
+
+  .cmd-meta.warn {
+    color: var(--accent-warning);
+  }
+
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .modal-head h3 {
+    margin: 0;
+    font-size: 14.5px;
+    font-weight: 500;
+  }
+
+  .modal-head .close-btn {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .field label {
+    font-size: 11.5px;
     color: var(--text-muted);
-  }
-
-  .input-field {
-    background: transparent;
-    border: 1px solid var(--panel-border);
-    padding: 0.75rem 1rem;
-    color: var(--text-main);
-    font-family: inherit;
-    font-size: 0.85rem;
-    transition: border-color 0.2s;
-    border-radius: 0;
-  }
-
-  .input-field:focus {
-    outline: none;
-    border-color: var(--text-main);
   }
 
   .input-error {
-    border-color: #ff4444 !important;
+    border-color: var(--accent-danger);
   }
 
   .error-text {
-    color: #ff4444;
-    font-size: 0.65rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    margin-top: -0.25rem;
-    animation: fadeIn 0.2s ease;
+    font-size: 11.5px;
+    color: var(--accent-danger);
   }
 
-  .modal-actions {
+  .persist-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: #b4b4bb;
+    cursor: pointer;
+  }
+
+  .modal-foot {
     display: flex;
     justify-content: flex-end;
-    gap: 1rem;
-    margin-top: 1rem;
-  }
-
-  .row-group {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    border-top: 1px solid var(--panel-border);
-    padding-top: 1.5rem;
-    margin-top: 0.5rem;
-  }
-
-  .label-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .sub-label {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    letter-spacing: 0.1em;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-2px); }
-    to { opacity: 1; transform: translateY(0); }
+    gap: 8px;
+    padding-top: 4px;
   }
 </style>
