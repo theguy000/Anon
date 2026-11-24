@@ -8,7 +8,7 @@
 
 <SettingsSection
   title="Fonts"
-  hint="{fp.fonts?.length ? `${fp.fonts.length} fonts` : 'Auto'}"
+  hint={fp.fonts?.length ? `${fp.fonts.length} fonts` : "Auto"}
   bind:open
 >
   <div class="field">
@@ -21,12 +21,9 @@
         fp.fonts = val ? val.split(",").map((s) => s.trim()).filter(Boolean) : null;
         fp = fp;
       }}
-      placeholder="Auto — OS font subset from Camoufox v159 bundle"
+      placeholder="Auto (OS font set)"
       class="input-field mono textarea"
       rows="3"
     ></textarea>
-    <span class="field-hint">
-      Leave empty to use Camoufox's bundled OS font set.
-    </span>
   </div>
 </SettingsSection>

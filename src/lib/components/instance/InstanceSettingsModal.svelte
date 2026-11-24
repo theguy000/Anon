@@ -35,6 +35,7 @@
   import AdvancedSection from "./settings/AdvancedSection.svelte";
   import ProxySection from "./settings/ProxySection.svelte";
   import { WINDOW_PRESETS } from "./settings/constants";
+  import { setBool } from "./settings/utils";
   import "./settings/InstanceSettingsModal.css";
 
   const dispatch = createEventDispatcher();
@@ -101,6 +102,7 @@
         instanceTags = instance.tags ? [...instance.tags] : [];
         saving = false;
         conflicts = [];
+        sections = {};
         activeTab = "fingerprint";
         selectedScreenPreset = "";
         selectedWebglPreset = "";
@@ -230,7 +232,7 @@
       notes = "";
       instanceTags = [];
     } else {
-      fp = { auto_fingerprint: true, auto_os: "host", auto_change_window_size: true };
+      fp = { auto_fingerprint: true, auto_os: null, auto_change_window_size: true };
       selectedScreenPreset = "";
       selectedWebglPreset = "";
       selectedLocale = "";
@@ -249,27 +251,22 @@
   }
 </script>
 
-<Modal {show} on:close={handleClose} maxWidth="680px" ariaLabel="Instance settings">
+<Modal {show} on:close={handleClose} maxWidth="600px" ariaLabel="Instance settings">
   <div class="settings-modal">
     <div class="settings-header">
       <div class="header-left">
         <h3>Instance settings</h3>
         {#if instance}
-          <div class="instance-name">
-            <span class="instance-name-value">{instance.name}</span>
-          </div>
+          <span class="instance-name-sep">·</span>
+          <span class="instance-name-inline">{instance.name}</span>
         {/if}
       </div>
-      <button class="close-btn" aria-label="Close" on:click={handleClose}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
+      <button type="button" class="close-btn" aria-label="Close" on:click={handleClose}>×</button>
     </div>
 
     <div class="tab-bar">
       <button
+        type="button"
         class="tab-item"
         class:tab-active={activeTab === "fingerprint"}
         on:click={() => (activeTab = "fingerprint")}
@@ -277,6 +274,7 @@
         Fingerprint
       </button>
       <button
+        type="button"
         class="tab-item"
         class:tab-active={activeTab === "proxy"}
         on:click={() => (activeTab = "proxy")}
@@ -284,108 +282,260 @@
         Proxy
       </button>
       <button
+        type="button"
         class="tab-item"
         class:tab-active={activeTab === "notes"}
         on:click={() => (activeTab = "notes")}
       >
-        Notes & tags
+        Notes &amp; tags
       </button>
     </div>
 
     <div class="settings-body">
       {#if activeTab === "fingerprint"}
-        <div class="auto-panel" class:auto-on={autoMode}>
-          <div class="auto-head">
-            <div class="auto-title-group">
-              <span class="auto-title">Auto fingerprinting</span>
-              <span class="auto-sub">Camoufox v159 deterministic identity</span>
+        <section class="settings-group">
+          <div class="setting-row">
+            <div class="setting-label-wrap">
+              <label class="setting-label" for="fp-auto-mode">Automatic fingerprint</label>
+              <span class="setting-sub">
+                Picks a realistic device and matches your proxy's location.
+              </span>
             </div>
-            <button
-              type="button"
-              class="btn btn-toggle {autoMode ? 'btn-active' : ''}"
-              on:click={() => (autoMode = !autoMode)}
-            >
-              {autoMode ? "On" : "Off"}
-            </button>
+            <label class="switch">
+              <input id="fp-auto-mode" type="checkbox" bind:checked={autoMode} />
+              <span class="slider"></span>
+            </label>
           </div>
 
           {#if autoMode}
-            <p class="auto-desc">
-              Keeps one stable OS, GPU, CPU, font, voice, and media-device profile across relaunches. Timezone, locale, and coordinates follow the instance's exit IP.
-            </p>
-
-            <div class="auto-row">
-              <div class="field" style="flex: 1;">
-                <label for="auto-os-select">Target OS</label>
+            <div class="setting-row" style="margin-top: 12px;">
+              <label class="setting-label" for="auto-os-select">Operating system</label>
+              <div class="setting-control w210">
                 <select id="auto-os-select" class="input-field" bind:value={autoOs}>
-                  <option value="host">Host OS (recommended)</option>
-                  <option value="any">Any OS (Windows / macOS / Linux)</option>
+                  <option value="host">Match this PC</option>
+                  <option value="any">Any OS</option>
                   <option value="windows">Windows</option>
                   <option value="macos">macOS</option>
                   <option value="linux">Linux</option>
                 </select>
               </div>
-              <div class="auto-regen-wrap">
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  disabled={isRunning || regenerating}
-                  title={isRunning ? "Stop instance before regenerating identity" : "Roll a new deterministic hardware identity"}
-                  on:click={handleRegenerate}
-                >
-                  {regenerating ? "Regenerating…" : "Regenerate identity"}
-                </button>
-              </div>
             </div>
 
-            <div class="auto-divider"></div>
-
-            <div class="toggle-item">
-              <div class="label-group">
-                <span class="auto-label">Vary window size each launch</span>
-                <span class="field-hint">
-                  {autoChangeWindowSize
-                    ? "Varies outer window geometry per launch while keeping hardware fixed."
-                    : "Keeps deterministic window size and position."}
-                </span>
-              </div>
+            <div class="setting-row">
+              <span class="setting-label">
+                Device identity
+                <span class="setting-meta mono">#{(fp.identity_nonce ?? 0) + 1}</span>
+              </span>
               <button
                 type="button"
-                class="btn btn-toggle {autoChangeWindowSize ? 'btn-active' : ''}"
-                on:click={() => (autoChangeWindowSize = !autoChangeWindowSize)}
+                class="btn btn-sm"
+                disabled={isRunning || regenerating}
+                title={isRunning
+                  ? "Stop this instance before generating a new identity"
+                  : "Generate a fresh device fingerprint for this profile"}
+                on:click={handleRegenerate}
               >
-                {autoChangeWindowSize ? "On" : "Off"}
+                {regenerating ? "Generating…" : "New identity"}
               </button>
             </div>
 
+            <div class="setting-row">
+              <label class="setting-label" for="fp-vary-window">
+                Vary window size each launch
+                <span
+                  class="tip"
+                  data-tip="Uses a slightly different realistic window size each time you open this profile."
+                >?</span>
+              </label>
+              <label class="switch">
+                <input id="fp-vary-window" type="checkbox" bind:checked={autoChangeWindowSize} />
+                <span class="slider"></span>
+              </label>
+            </div>
+
             {#if !autoChangeWindowSize}
-              <div class="field mt">
-                <label for="auto-window-size-preset">Fixed window preset</label>
-                <select
-                  id="auto-window-size-preset"
-                  class="input-field"
-                  bind:value={autoWindowPresetIndex}
-                >
-                  <option value={-1}>Auto (90% of available screen)</option>
-                  {#each WINDOW_PRESETS as p, i}
-                    <option value={i}>{p.label}</option>
-                  {/each}
-                </select>
+              <div class="setting-row">
+                <label class="setting-label" for="auto-window-size-preset">Fixed window size</label>
+                <div class="setting-control w210">
+                  <select
+                    id="auto-window-size-preset"
+                    class="input-field"
+                    bind:value={autoWindowPresetIndex}
+                  >
+                    <option value={-1}>Auto (90% of screen)</option>
+                    {#each WINDOW_PRESETS as p, i}
+                      <option value={i}>{p.label}</option>
+                    {/each}
+                  </select>
+                </div>
               </div>
             {/if}
           {/if}
-        </div>
+        </section>
 
         {#if autoMode}
-          <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} autoMode={true} />
-          <BehaviorSection bind:fp bind:open={sections["behavior"]} autoMode={true} />
+          <section class="settings-group">
+            <h4 class="settings-group-title">Privacy &amp; blocking</h4>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-ublock">
+                uBlock Origin
+                <span class="tip" data-tip="Load the built-in ad blocker.">?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-ublock"
+                  type="checkbox"
+                  checked={fp.enable_ublock ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "enable_ublock", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-images">
+                Block images
+                <span class="tip" data-tip="Skip loading images to save proxy bandwidth.">?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-images"
+                  type="checkbox"
+                  checked={fp.block_images ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "block_images", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-webrtc">
+                Block WebRTC
+                <span
+                  class="tip"
+                  data-tip="Turns off WebRTC completely. Leave off unless a site leaks your IP."
+                >?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-webrtc"
+                  type="checkbox"
+                  checked={fp.block_webrtc ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "block_webrtc", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-ipv4">
+                IPv4 only
+                <span
+                  class="tip"
+                  data-tip="Prevents IPv6 leaks when using an IPv4-only proxy."
+                >?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-ipv4"
+                  type="checkbox"
+                  checked={fp.network_ipv4_only ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "network_ipv4_only", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-canvas">
+                Randomize canvas
+                <span
+                  class="tip"
+                  data-tip="Adds subtle noise to canvas readback and blocks WebGPU."
+                >?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-canvas"
+                  type="checkbox"
+                  checked={fp.canvas_noise ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "canvas_noise", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-webgl">
+                Disable WebGL
+                <span class="tip" data-tip="Turns off 3D graphics APIs completely.">?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-webgl"
+                  type="checkbox"
+                  checked={fp.block_webgl ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "block_webgl", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-codecs">
+                Match OS media codecs
+                <span
+                  class="tip"
+                  data-tip="Align reported video codecs with the chosen operating system."
+                >?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-codecs"
+                  type="checkbox"
+                  checked={fp.media_spoof_codecs ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "media_spoof_codecs", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="fp-auto-coop">
+                Allow cross-origin popups
+                <span
+                  class="tip"
+                  data-tip="Helps with login or CAPTCHA popups that fail under strict isolation."
+                >?</span>
+              </label>
+              <label class="switch">
+                <input
+                  id="fp-auto-coop"
+                  type="checkbox"
+                  checked={fp.disable_coop ?? false}
+                  on:change={(e) =>
+                    (fp = setBool(fp, "disable_coop", (e.target as HTMLInputElement).checked))}
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </section>
+
           <AdvancedSection bind:fp bind:open={sections["advanced"]} />
         {:else}
-          <div class="preset-panel">
-            <div class="preset-head">Global profile preset</div>
+          <section class="settings-group">
+            <h4 class="settings-group-title">Profile preset</h4>
             <div class="field-row">
               <div class="field" style="flex: 1;">
-                <label for="globalCategory">OS profile</label>
+                <label for="globalCategory">Operating system</label>
                 <select
                   id="globalCategory"
                   class="input-field"
@@ -399,7 +549,7 @@
                 </select>
               </div>
               <div class="field" style="flex: 2;">
-                <label for="globalPresetIndex">Profile preset</label>
+                <label for="globalPresetIndex">Preset</label>
                 <select
                   id="globalPresetIndex"
                   class="input-field"
@@ -420,14 +570,14 @@
             <div class="preset-actions">
               <button
                 type="button"
-                class="btn btn-primary btn-sm"
+                class="btn btn-sm"
                 disabled={globalPresetIndex === -1}
                 on:click={applyGlobalPreset}
               >
                 Apply preset
               </button>
             </div>
-          </div>
+          </section>
 
           <NavigatorSection bind:fp bind:open={sections["nav"]} />
           <ScreenDisplaySection bind:fp bind:open={sections["screen"]} bind:selectedScreenPreset />
@@ -464,7 +614,7 @@
             <textarea
               id="instance-notes"
               class="notes-textarea"
-              placeholder="Add notes about this instance..."
+              placeholder="Optional notes about this instance…"
               bind:value={notes}
               rows="5"
             ></textarea>
@@ -478,7 +628,6 @@
                     type="button"
                     class="tag-toggle"
                     class:tag-active={instanceTags.includes(tagDef.label)}
-                    style="border-color: {tagDef.color}; color: {instanceTags.includes(tagDef.label) ? '#000' : tagDef.color}; background: {instanceTags.includes(tagDef.label) ? tagDef.color : 'transparent'}"
                     on:click={() => {
                       if (instanceTags.includes(tagDef.label)) {
                         instanceTags = instanceTags.filter((t) => t !== tagDef.label);
@@ -487,6 +636,7 @@
                       }
                     }}
                   >
+                    <span class="tag-toggle-dot" style="background: {tagDef.color}"></span>
                     {tagDef.label}
                   </button>
                 {/each}
@@ -498,11 +648,13 @@
     </div>
 
     <div class="settings-footer">
-      <button type="button" class="btn btn-danger btn-sm" on:click={handleReset}>Reset tab</button>
+      <button type="button" class="btn btn-reset-quiet btn-sm" on:click={handleReset}>
+        Reset tab
+      </button>
       <div class="footer-right">
         <button type="button" class="btn btn-sm" on:click={handleClose}>Cancel</button>
         <button type="button" class="btn btn-primary btn-sm" on:click={handleSave} disabled={saving}>
-          {saving ? "Saving…" : "Save changes"}
+          {saving ? "Saving…" : "Save"}
         </button>
       </div>
     </div>
@@ -510,95 +662,8 @@
 </Modal>
 
 <style>
-  .auto-panel {
-    padding: 14px 16px;
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius);
-    background: var(--surface-recessed);
-    margin-bottom: 12px;
-  }
-
-  .auto-panel.auto-on {
-    border-color: rgba(74, 222, 128, 0.35);
-    background: var(--accent-auto-bg);
-  }
-
-  .auto-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .auto-title-group {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-  }
-
-  .auto-title {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-main);
-  }
-
-  .auto-panel.auto-on .auto-title {
-    color: var(--accent-auto);
-  }
-
-  .auto-sub {
-    font-size: 11.5px;
-    color: var(--text-muted);
-  }
-
-  .auto-desc {
-    margin-top: 10px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-muted);
-  }
-
-  .auto-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 12px;
-    margin-top: 12px;
-  }
-
-  .auto-regen-wrap {
-    flex-shrink: 0;
-  }
-
-  .auto-divider {
-    height: 1px;
-    background: var(--hairline);
-    margin: 12px 0;
-  }
-
-  .auto-label {
-    font-size: 12px;
-    color: var(--text-main);
-  }
-
-  .preset-panel {
-    padding: 14px 16px;
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius);
-    background: var(--surface-recessed);
-    margin-bottom: 12px;
-  }
-
-  .preset-head {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    padding-bottom: 8px;
-    margin-bottom: 12px;
-    border-bottom: 1px solid var(--hairline);
-  }
-
   .preset-actions {
-    margin-top: 12px;
+    margin-top: 10px;
     display: flex;
     justify-content: flex-end;
   }

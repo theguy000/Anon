@@ -48,7 +48,7 @@ export const SAMPLE_RATES = [
 export const MAX_CHANNELS = [1, 2, 4, 6, 8, 16, 32, 64, 128, 256];
 
 export const WEBGL_PRESETS: { label: string; renderer: string; vendor: string }[] = [
-  { label: "AUTO", renderer: "", vendor: "" },
+  { label: "Auto", renderer: "", vendor: "" },
   { label: "Apple M1", renderer: "Apple M1, or similar", vendor: "Apple" },
   { label: "Apple M2", renderer: "Apple M2, or similar", vendor: "Apple" },
   { label: "Apple M3", renderer: "Apple M3, or similar", vendor: "Apple" },
@@ -121,7 +121,7 @@ export const WEBGL_PRESETS: { label: string; renderer: string; vendor: string }[
 ];
 
 export const LOCALES: { label: string; lang: string; region: string }[] = [
-  { label: "AUTO", lang: "", region: "" },
+  { label: "Auto", lang: "", region: "" },
   { label: "English (US)", lang: "en", region: "US" },
   { label: "English (GB)", lang: "en", region: "GB" },
   { label: "English (AU)", lang: "en", region: "AU" },

@@ -7,27 +7,31 @@
   export let open: boolean = false;
 </script>
 
-<SettingsSection title="Speech voices" bind:open>
+<SettingsSection
+  title="Speech voices"
+  hint={fp.speech_voices?.length ? `${fp.speech_voices.length} set` : "Auto"}
+  bind:open
+>
   <div class="field">
-    <label for="fp-voice-names-comma-separated">Voice entries (comma-separated)</label>
+    <label for="fp-speech-voices">Voice list (comma-separated)</label>
     <textarea
-      id="fp-voice-names-comma-separated"
+      id="fp-speech-voices"
       value={fp.speech_voices?.join(", ") ?? ""}
       on:change={(e) => {
         const val = (e.target as HTMLTextAreaElement).value.trim();
         fp.speech_voices = val ? val.split(",").map((s) => s.trim()).filter(Boolean) : null;
         fp = fp;
       }}
-      placeholder="Auto — OS-matched voices (e.g. Microsoft David:en-US:local)"
+      placeholder="Auto (OS-matched voices)"
       class="input-field mono textarea"
       rows="3"
     ></textarea>
   </div>
   <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-voices-block">Block host voices if undefined</label>
-      <span class="field-hint">Fail closed so host OS SAPI/NSSpeech voices never leak</span>
-    </div>
+    <label for="fp-voices-block">
+      Hide host voices when unset
+      <span class="tip" data-tip="Prevents your real PC's installed voices from leaking.">?</span>
+    </label>
     <label class="switch">
       <input
         id="fp-voices-block"

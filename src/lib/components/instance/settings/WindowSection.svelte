@@ -29,6 +29,9 @@
   }
 
   $: isCustom = selectedWindowPreset === "custom";
+  $: setCount = [fp.outer_width, fp.outer_height, fp.inner_width, fp.inner_height].filter(
+    (v) => v != null
+  ).length;
 
   $: maxW = overrideLimit
     ? (fp.screen_width ?? physicalW)
@@ -77,132 +80,143 @@
     fp = fp;
   }
 
-  function clampedSetNum(field: keyof FingerprintConfig, e: Event, max: number): FingerprintConfig {
+  function clampedSetNum(
+    field: keyof FingerprintConfig,
+    e: Event,
+    max: number
+  ): FingerprintConfig {
     fp = setNum(fp, field, e);
-    if ((fp as any)[field] != null) (fp as any)[field] = Math.min((fp as any)[field], max);
+    const val = (fp as Record<string, unknown>)[field];
+    if (typeof val === "number") {
+      (fp as Record<string, unknown>)[field] = Math.min(val, max);
+    }
     return fp;
   }
 </script>
 
-<SettingsSection title="WINDOW"
-  titleTooltip="Browser window size — the dimensions of the browser window reported to websites"
-  hint="{[
-    fp.outer_width,
-    fp.outer_height,
-    fp.inner_width,
-    fp.inner_height,
-  ].filter((v) => v != null).length} SET"
+<SettingsSection
+  title="Window"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
-  <div class="field" data-tooltip="Popular browser window sizes. Choose 'Custom' to enter values manually.">
-    <label for="fp-window-preset">WINDOW SIZE PRESET</label>
-    <select id="fp-window-preset"
+  <div class="field">
+    <label for="fp-window-preset">Window size preset</label>
+    <select
+      id="fp-window-preset"
       value={selectedWindowPreset}
       on:change={applyWindowPreset}
       class="input-field"
     >
-      <option value="">— SELECT PRESET —</option>
+      <option value="">Auto</option>
       {#each WINDOW_PRESETS as p, i}
-        <option value={String(i)} disabled={p.w > maxW || p.h > maxH}>{p.label}{p.w > maxW || p.h > maxH ? ' (exceeds limit)' : ''}</option>
+        <option value={String(i)} disabled={p.w > maxW || p.h > maxH}>
+          {p.label}{p.w > maxW || p.h > maxH ? " (exceeds monitor)" : ""}
+        </option>
       {/each}
       <option value="custom">Custom…</option>
     </select>
   </div>
 
-  <div class="field override-row"
-    data-tooltip="OFF: limited to your physical monitor ({physicalW}×{physicalH}). ON: can use spoofed monitor size."
-  >
-    <span class="override-label">
-      OVERRIDE MONITOR LIMIT
-      <span class="override-hint">({physicalW}×{physicalH})</span>
-    </span>
-    <button
-      class="btn override-btn" class:override-btn-active={overrideLimit}
-      on:click={() => { overrideLimit = !overrideLimit; }}
-      type="button"
-    >
-      {overrideLimit ? 'ON' : 'OFF'}
-    </button>
+  <div class="toggle-item">
+    <label for="fp-override-monitor">
+      Allow larger than monitor ({physicalW}×{physicalH})
+    </label>
+    <label class="switch">
+      <input id="fp-override-monitor" type="checkbox" bind:checked={overrideLimit} />
+      <span class="slider"></span>
+    </label>
   </div>
 
   {#if isCustom}
     <div class="field-row">
-      <div class="field half" data-tooltip="The outer width of the browser window (max {maxW}px).">
-        <label for="fp-outer-width">OUTER WIDTH</label><input id="fp-outer-width"
+      <div class="field half">
+        <label for="fp-outer-width">Outer width</label>
+        <input
+          id="fp-outer-width"
           type="number"
           min="1"
           max={maxW}
           value={numVal(fp.outer_width)}
-          on:input={(e) => fp = clampedSetNum("outer_width", e, maxW)}
-          placeholder="AUTO"
+          on:input={(e) => (fp = clampedSetNum("outer_width", e, maxW))}
+          placeholder="Auto"
           class="input-field"
         />
       </div>
-      <div class="field half" data-tooltip="The outer height of the browser window (max {maxH}px).">
-        <label for="fp-outer-height">OUTER HEIGHT</label><input id="fp-outer-height"
+      <div class="field half">
+        <label for="fp-outer-height">Outer height</label>
+        <input
+          id="fp-outer-height"
           type="number"
           min="1"
           max={maxH}
           value={numVal(fp.outer_height)}
-          on:input={(e) => fp = clampedSetNum("outer_height", e, maxH)}
-          placeholder="AUTO"
+          on:input={(e) => (fp = clampedSetNum("outer_height", e, maxH))}
+          placeholder="Auto"
           class="input-field"
         />
       </div>
     </div>
     <div class="field-row">
-      <div class="field half" data-tooltip="The inner width of the browser viewport (max {maxW}px).">
-        <label for="fp-inner-width">INNER WIDTH</label><input id="fp-inner-width"
+      <div class="field half">
+        <label for="fp-inner-width">Inner width</label>
+        <input
+          id="fp-inner-width"
           type="number"
           min="1"
           max={maxW}
           value={numVal(fp.inner_width)}
-          on:input={(e) => fp = clampedSetNum("inner_width", e, maxW)}
-          placeholder="AUTO"
+          on:input={(e) => (fp = clampedSetNum("inner_width", e, maxW))}
+          placeholder="Auto"
           class="input-field"
         />
       </div>
-      <div class="field half" data-tooltip="The inner height of the browser viewport (max {maxH}px).">
-        <label for="fp-inner-height">INNER HEIGHT</label><input id="fp-inner-height"
+      <div class="field half">
+        <label for="fp-inner-height">Inner height</label>
+        <input
+          id="fp-inner-height"
           type="number"
           min="1"
           max={maxH}
           value={numVal(fp.inner_height)}
-          on:input={(e) => fp = clampedSetNum("inner_height", e, maxH)}
-          placeholder="AUTO"
+          on:input={(e) => (fp = clampedSetNum("inner_height", e, maxH))}
+          placeholder="Auto"
           class="input-field"
         />
       </div>
     </div>
   {:else if selectedWindowPreset !== ""}
     <div class="field-row">
-      <div class="field half" data-tooltip="The outer width of the browser window.">
-        <span class="field-label">OUTER WIDTH</span>
-        <span class="preset-value">{fp.outer_width ?? 'AUTO'}</span>
+      <div class="field half">
+        <span class="field-static-label">Outer width</span>
+        <span class="preset-value mono">{fp.outer_width ?? "Auto"}</span>
       </div>
-      <div class="field half" data-tooltip="The outer height of the browser window.">
-        <span class="field-label">OUTER HEIGHT</span>
-        <span class="preset-value">{fp.outer_height ?? 'AUTO'}</span>
+      <div class="field half">
+        <span class="field-static-label">Outer height</span>
+        <span class="preset-value mono">{fp.outer_height ?? "Auto"}</span>
       </div>
     </div>
   {/if}
 
   <div class="field-row">
-    <div class="field half" data-tooltip="The horizontal distance of the left border of the window from the left border of the screen.">
-      <label for="fp-screen-x">SCREEN X</label><input id="fp-screen-x"
+    <div class="field half">
+      <label for="fp-screen-x">Screen X</label>
+      <input
+        id="fp-screen-x"
         type="number"
         value={numVal(fp.screen_x)}
-        on:input={(e) => fp = setNum(fp, "screen_x", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setNum(fp, "screen_x", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
-    <div class="field half" data-tooltip="The vertical distance of the top border of the window from the top border of the screen.">
-      <label for="fp-screen-y">SCREEN Y</label><input id="fp-screen-y"
+    <div class="field half">
+      <label for="fp-screen-y">Screen Y</label>
+      <input
+        id="fp-screen-y"
         type="number"
         value={numVal(fp.screen_y)}
-        on:input={(e) => fp = setNum(fp, "screen_y", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setNum(fp, "screen_y", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
@@ -210,48 +224,18 @@
 </SettingsSection>
 
 <style>
+  .field-static-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
   .preset-value {
     display: block;
-    font-size: 0.7rem;
+    font-size: 12px;
     color: var(--text-main);
-    padding: 0.5rem 0.6rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--panel-border);
-    letter-spacing: 0.05em;
-  }
-  .field-label {
-    display: block;
-    font-size: 0.6rem;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    margin-bottom: 0.3rem;
-  }
-  .override-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .override-label {
-    font-size: 0.6rem;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
-    text-transform: uppercase;
-  }
-  .override-hint {
-    font-size: 0.55rem;
-    opacity: 0.6;
-    margin-left: 0.5em;
-  }
-  .override-btn {
-    font-size: 0.55rem;
-    padding: 3px 10px;
-    min-width: 42px;
-    letter-spacing: 0.05em;
-  }
-  .override-btn-active {
-    background: var(--text-main);
-    color: var(--bg-color);
-    border-color: var(--text-main);
+    padding: 6px 10px;
+    background: var(--surface-recessed);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
   }
 </style>

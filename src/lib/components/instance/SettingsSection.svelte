@@ -11,7 +11,7 @@
     type="button"
     aria-expanded={open}
     on:click={() => (open = !open)}
-    data-tooltip={titleTooltip || undefined}
+    title={titleTooltip || undefined}
   >
     <span class="chevron">{open ? "▾" : "▸"}</span>
     <span>{title}</span>
@@ -19,18 +19,16 @@
       <span class="section-hint">{hint}</span>
     {/if}
   </button>
-  <div class="section-content" style="display: {open ? 'flex' : 'none'};">
-    <slot />
-  </div>
+  {#if open}
+    <div class="section-content">
+      <slot />
+    </div>
+  {/if}
 </div>
 
 <style>
   .section {
-    border-bottom: 1px solid var(--hairline);
-  }
-
-  .section:last-child {
-    border-bottom: none;
+    border-top: 1px solid var(--hairline);
   }
 
   .section-header {
@@ -38,23 +36,24 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 12px 0;
+    height: 38px;
     background: none;
     border: none;
-    color: var(--text-main);
+    color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 12.5px;
     font-weight: 500;
     text-align: left;
+    transition: color 0.12s ease;
   }
 
   .section-header:hover {
-    color: #ffffff;
+    color: var(--text-main);
   }
 
   .chevron {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-dim);
     width: 12px;
     text-align: center;
@@ -63,13 +62,13 @@
 
   .section-hint {
     margin-left: auto;
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--text-dim);
     font-weight: 400;
   }
 
   .section-content {
-    padding: 0 0 14px 0;
+    padding: 4px 0 14px 0;
     display: flex;
     flex-direction: column;
     gap: 10px;

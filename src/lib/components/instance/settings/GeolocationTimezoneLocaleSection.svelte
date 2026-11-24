@@ -8,13 +8,20 @@
   export let open: boolean = false;
   export let selectedLocale = "";
 
+  $: setCount = [
+    fp.geo_latitude,
+    fp.geo_longitude,
+    fp.timezone,
+    fp.locale_language,
+  ].filter((v) => v != null).length;
+
   function applyLocale(e: Event) {
-    const idx = parseInt((e.target as HTMLSelectElement).value);
+    const idx = parseInt((e.target as HTMLSelectElement).value, 10);
     selectedLocale = (e.target as HTMLSelectElement).value;
     if (isNaN(idx)) return;
     const l = LOCALES[idx];
     if (l.label === "Custom…") return;
-    if (l.label === "AUTO") {
+    if (l.label === "Auto") {
       fp.locale_language = null;
       fp.locale_region = null;
       fp.locale_script = null;
@@ -28,13 +35,8 @@
 </script>
 
 <SettingsSection
-  title="Geolocation, Timezone & Locale"
-  hint="{[
-    fp.geo_latitude,
-    fp.geo_longitude,
-    fp.timezone,
-    fp.locale_language,
-  ].filter((v) => v != null).length} set"
+  title="Location & language"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
   <div class="field-row">
@@ -100,7 +102,7 @@
       on:change={applyLocale}
       class="input-field"
     >
-      <option value="">— Select locale —</option>
+      <option value="">Select locale</option>
       {#each LOCALES as l, i}<option value={i}>{l.label}</option>{/each}
     </select>
   </div>

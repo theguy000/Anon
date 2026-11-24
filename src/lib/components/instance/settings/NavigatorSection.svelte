@@ -28,10 +28,13 @@
 </script>
 
 <SettingsSection
-  title="Navigator & CPU"
-  hint="{[fp.user_agent, fp.platform, fp.hardware_concurrency, fp.cpu_arch, fp.cpu_manufacturer].filter(
-    (v) => v != null,
-  ).length} set"
+  title="Device & CPU"
+  hint={(() => {
+    const n = [fp.user_agent, fp.platform, fp.hardware_concurrency, fp.cpu_arch, fp.cpu_manufacturer].filter(
+      (v) => v != null,
+    ).length;
+    return n > 0 ? `${n} set` : "Auto";
+  })()}
   bind:open
 >
   <div class="field">

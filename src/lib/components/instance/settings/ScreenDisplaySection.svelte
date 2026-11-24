@@ -8,22 +8,25 @@
   export let open: boolean = false;
   export let selectedScreenPreset = "";
 
-  // Reactive two-way sync for select dropdowns
   $: colorDepthVal = fp.color_depth != null ? String(fp.color_depth) : "";
   $: pixelDepthVal = fp.pixel_depth != null ? String(fp.pixel_depth) : "";
   $: dprVal = fp.device_pixel_ratio != null ? String(fp.device_pixel_ratio) : "";
+  $: setCount = [fp.screen_width, fp.screen_height, fp.device_pixel_ratio].filter(
+    (v) => v != null
+  ).length;
 
   function setNumFromSelect(field: keyof FingerprintConfig, val: string) {
-    (fp as any)[field] = val === "" ? null : Number(val);
+    (fp as Record<string, unknown>)[field] = val === "" ? null : Number(val);
     fp = fp;
   }
+
   function setFloatFromSelect(field: keyof FingerprintConfig, val: string) {
-    (fp as any)[field] = val === "" ? null : parseFloat(val);
+    (fp as Record<string, unknown>)[field] = val === "" ? null : parseFloat(val);
     fp = fp;
   }
 
   function applyScreenPreset(e: Event) {
-    const idx = parseInt((e.target as HTMLSelectElement).value);
+    const idx = parseInt((e.target as HTMLSelectElement).value, 10);
     selectedScreenPreset = (e.target as HTMLSelectElement).value;
     if (isNaN(idx)) return;
     const p = $presetDerivedOptions.screenPresets[idx];
@@ -35,106 +38,109 @@
   }
 </script>
 
-<SettingsSection title="SCREEN & DISPLAY"
-  titleTooltip="Monitor resolution — the physical display size reported to websites"
-  hint="{[
-    fp.screen_width,
-    fp.screen_height,
-    fp.device_pixel_ratio,
-  ].filter((v) => v != null).length} SET"
+<SettingsSection
+  title="Display"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
-  <div class="field" data-tooltip="Pre-defined resolutions for the browser layout.">
-    <label for="fp-resolution-preset">RESOLUTION PRESET</label>
-    <select id="fp-resolution-preset"
+  <div class="field">
+    <label for="fp-resolution-preset">Resolution preset</label>
+    <select
+      id="fp-resolution-preset"
       value={selectedScreenPreset}
       on:change={applyScreenPreset}
       class="input-field"
     >
-      <option value="">— SELECT PRESET —</option>
-      {#each $presetDerivedOptions.screenPresets as p, i}<option value={i}>{p.label}</option
-        >{/each}
+      <option value="">Select preset</option>
+      {#each $presetDerivedOptions.screenPresets as p, i}<option value={i}>{p.label}</option>{/each}
     </select>
   </div>
   <div class="field-row">
-    <div class="field half" data-tooltip="The width of the screen in pixels.">
-      <label for="fp-width-px">WIDTH (PX)</label>
-      <input id="fp-width-px"
+    <div class="field half">
+      <label for="fp-width-px">Width (px)</label>
+      <input
+        id="fp-width-px"
         type="number"
         min="1"
         value={numVal(fp.screen_width)}
-        on:input={(e) => fp = setNum(fp, "screen_width", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setNum(fp, "screen_width", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
-    <div class="field half" data-tooltip="The height of the screen in pixels.">
-      <label for="fp-height-px">HEIGHT (PX)</label>
-      <input id="fp-height-px"
+    <div class="field half">
+      <label for="fp-height-px">Height (px)</label>
+      <input
+        id="fp-height-px"
         type="number"
         min="1"
         value={numVal(fp.screen_height)}
-        on:input={(e) => fp = setNum(fp, "screen_height", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setNum(fp, "screen_height", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
   </div>
   <div class="field-row">
-    <div class="field half" data-tooltip="The width of the screen available for web pages.">
-      <label for="fp-avail-width">AVAIL WIDTH</label>
-      <input id="fp-avail-width"
+    <div class="field half">
+      <label for="fp-avail-width">Available width</label>
+      <input
+        id="fp-avail-width"
         type="number"
         min="0"
         value={numVal(fp.screen_avail_width)}
-        on:input={(e) => fp = setNum(fp, "screen_avail_width", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setNum(fp, "screen_avail_width", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
-    <div class="field half" data-tooltip="The height of the screen available for web pages.">
-      <label for="fp-avail-height">AVAIL HEIGHT</label>
-      <input id="fp-avail-height"
+    <div class="field half">
+      <label for="fp-avail-height">Available height</label>
+      <input
+        id="fp-avail-height"
         type="number"
         min="0"
         value={numVal(fp.screen_avail_height)}
-        on:input={(e) => fp = setNum(fp, "screen_avail_height", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setNum(fp, "screen_avail_height", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
   </div>
   <div class="field-row">
-    <div class="field third" data-tooltip="The number of bits used to represent the color of a single pixel.">
-      <label for="fp-color-depth">COLOR DEPTH</label>
-      <select id="fp-color-depth"
+    <div class="field third">
+      <label for="fp-color-depth">Color depth</label>
+      <select
+        id="fp-color-depth"
         bind:value={colorDepthVal}
         on:change={() => setNumFromSelect("color_depth", colorDepthVal)}
         class="input-field"
       >
-        <option value="">AUTO (24)</option>
-        {#each $presetDerivedOptions.colorDepths as d}<option value={String(d)}>{d}-BIT</option>{/each}
+        <option value="">Auto (24-bit)</option>
+        {#each $presetDerivedOptions.colorDepths as d}<option value={String(d)}>{d}-bit</option>{/each}
       </select>
     </div>
-    <div class="field third" data-tooltip="The number of bits used to represent the color of a single pixel (same as color depth).">
-      <label for="fp-pixel-depth">PIXEL DEPTH</label>
-      <select id="fp-pixel-depth"
+    <div class="field third">
+      <label for="fp-pixel-depth">Pixel depth</label>
+      <select
+        id="fp-pixel-depth"
         bind:value={pixelDepthVal}
         on:change={() => setNumFromSelect("pixel_depth", pixelDepthVal)}
         class="input-field"
       >
-        <option value="">AUTO (24)</option>
-        {#each $presetDerivedOptions.colorDepths as d}<option value={String(d)}>{d}-BIT</option>{/each}
+        <option value="">Auto (24-bit)</option>
+        {#each $presetDerivedOptions.colorDepths as d}<option value={String(d)}>{d}-bit</option>{/each}
       </select>
     </div>
-    <div class="field third" data-tooltip="The ratio of physical pixels to CSS pixels.">
-      <label for="fp-device-pixel-ratio">DEVICE PIXEL RATIO</label>
-      <select id="fp-device-pixel-ratio"
+    <div class="field third">
+      <label for="fp-device-pixel-ratio">Pixel ratio</label>
+      <select
+        id="fp-device-pixel-ratio"
         bind:value={dprVal}
         on:change={() => setFloatFromSelect("device_pixel_ratio", dprVal)}
         class="input-field"
       >
-        <option value="">AUTO</option>
+        <option value="">Auto</option>
         {#each $presetDerivedOptions.devicePixelRatios as d}<option value={String(d)}>{d}×</option>{/each}
       </select>
     </div>

@@ -5,48 +5,56 @@
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
-  export let autoMode: boolean = false;
+
+  $: setCount = [
+    fp.block_webrtc,
+    fp.network_ipv4_only,
+    fp.webrtc_ipv4,
+    fp.webrtc_ipv6,
+  ].filter((v) => v != null && v !== false).length;
 </script>
 
 <SettingsSection
-  title="WebRTC & Network"
-  hint="{[fp.block_webrtc, fp.network_ipv4_only, fp.webrtc_ipv4, fp.webrtc_ipv6].filter((v) => v != null && v !== false).length} set"
+  title="WebRTC & network"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
-  <span class="field-hint">
-    Camoufox v159 constrains WebRTC ICE behind proxies automatically and obfuscates LAN hosts via mDNS. Block WebRTC completely only if a site does not need it.
-  </span>
   <div class="toggle-item">
-    <div class="label-group">
-      <label for="fp-block-webrtc">Block WebRTC completely</label>
-      <span class="field-hint">Sets media.peerconnection.enabled = false</span>
-    </div>
+    <label for="fp-block-webrtc">
+      Block WebRTC
+      <span
+        class="tip"
+        data-tip="Turns off WebRTC completely. Leave off unless a site leaks your IP."
+      >?</span>
+    </label>
     <label class="switch">
       <input
         id="fp-block-webrtc"
         type="checkbox"
         checked={fp.block_webrtc ?? false}
-        on:change={(e) => (fp = setBool(fp, "block_webrtc", (e.target as HTMLInputElement).checked))}
+        on:change={(e) =>
+          (fp = setBool(fp, "block_webrtc", (e.target as HTMLInputElement).checked))}
       />
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-ipv4-only">IPv4 only</label>
-      <span class="field-hint">Prevent host IPv6 leaks on IPv4-only proxies (network:ipv4Only)</span>
-    </div>
+  <div class="toggle-item">
+    <label for="fp-ipv4-only">
+      IPv4 only
+      <span class="tip" data-tip="Prevents IPv6 leaks when using an IPv4-only proxy.">?</span>
+    </label>
     <label class="switch">
       <input
         id="fp-ipv4-only"
         type="checkbox"
         checked={fp.network_ipv4_only ?? false}
-        on:change={(e) => (fp = setBool(fp, "network_ipv4_only", (e.target as HTMLInputElement).checked))}
+        on:change={(e) =>
+          (fp = setBool(fp, "network_ipv4_only", (e.target as HTMLInputElement).checked))}
       />
       <span class="slider"></span>
     </label>
   </div>
-  {#if !fp.block_webrtc && !autoMode}
+  {#if !fp.block_webrtc}
     <div class="field-row mt">
       <div class="field half">
         <label for="fp-public-ipv4">Spoofed public IPv4</label>
@@ -55,7 +63,7 @@
           type="text"
           value={fp.webrtc_ipv4 ?? ""}
           on:input={(e) => (fp = setStr(fp, "webrtc_ipv4", e))}
-          placeholder="Auto (exit IP)"
+          placeholder="Auto"
           class="input-field mono"
         />
       </div>
