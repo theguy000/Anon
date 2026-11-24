@@ -295,30 +295,92 @@ fn check_os_screen(fp: &FingerprintConfig, detected_os: &Os) -> Vec<FingerprintC
     conflicts
 }
 
-// ── Main entry point ─────────────────────────────────────────────────────────
+// Rule 7: CPU architecture / manufacturer ↔ OS & GPU coherence
+fn check_cpu_coherence(
+    fp: &FingerprintConfig,
+    detected_os: Option<&Os>,
+) -> Vec<FingerprintConflict> {
+    let mut conflicts = Vec::new();
+    let arch = fp.cpu_arch.as_deref().map(str::to_ascii_lowercase);
+    let maker = fp.cpu_manufacturer.as_deref().map(str::to_ascii_lowercase);
+    let rl = fp
+        .webgl_renderer
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if let (Some(ref a), Some(ref m)) = (&arch, &maker) {
+        if a == "x86" && (m == "apple" || m == "qualcomm") {
+            conflicts.push(FingerprintConflict {
+                message: format!(
+                    "CPU manufacturer \"{}\" requires ARM architecture, not x86.",
+                    m
+                ),
+            });
+        }
+        if a == "arm" && (m == "intel" || m == "amd") {
+            conflicts.push(FingerprintConflict {
+                message: format!(
+                    "CPU manufacturer \"{}\" requires x86 architecture, not ARM.",
+                    m
+                ),
+            });
+        }
+    }
+
+    if let Some(os) = detected_os {
+        if let Some(ref m) = maker {
+            match os {
+                Os::MacOS if m == "amd" || m == "qualcomm" => {
+                    conflicts.push(FingerprintConflict {
+                        message: format!("CPU manufacturer \"{}\" is not valid on macOS.", m),
+                    });
+                }
+                Os::Windows if m == "apple" => {
+                    conflicts.push(FingerprintConflict {
+                        message: "Apple CPU manufacturer is not valid on Windows.".into(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if rl.starts_with("apple m") {
+        if arch.as_deref() == Some("x86") {
+            conflicts.push(FingerprintConflict {
+                message: "Apple Silicon WebGL renderer conflicts with x86 CPU architecture.".into(),
+            });
+        }
+        if let Some(ref m) = maker {
+            if m != "apple" {
+                conflicts.push(FingerprintConflict {
+                    message: format!("Apple Silicon WebGL renderer conflicts with \"{}\" CPU.", m),
+                });
+            }
+        }
+    }
+
+    conflicts
+}
 
 pub fn validate_fingerprint(fp: &FingerprintConfig) -> Vec<FingerprintConflict> {
-    // Skip validation in AUTO mode — presets are already curated
     if fp.auto_fingerprint == Some(true) {
         return Vec::new();
     }
 
     let mut conflicts = Vec::new();
 
-    // Rules 1 & 2: direct field cross-checks (no OS detection needed)
     if let Some(c) = check_platform_ua(fp) {
         conflicts.push(c);
     }
     if let Some(c) = check_platform_oscpu(fp) {
         conflicts.push(c);
     }
-
-    // Rule 5: header UA vs nav UA
     if let Some(c) = check_header_ua(fp) {
         conflicts.push(c);
     }
 
-    // Determine OS for OS-dependent rules (3, 4, 6)
     let detected_os = fp
         .platform
         .as_deref()
@@ -326,13 +388,12 @@ pub fn validate_fingerprint(fp: &FingerprintConfig) -> Vec<FingerprintConflict> 
         .or_else(|| fp.user_agent.as_deref().and_then(os_from_ua));
 
     if let Some(ref os) = detected_os {
-        // Rule 3: OS ↔ WebGL
         conflicts.extend(check_os_webgl(fp, os));
-        // Rule 4: OS ↔ Voices
         conflicts.extend(check_os_voices(fp, os));
-        // Rule 6: OS ↔ Screen
         conflicts.extend(check_os_screen(fp, os));
     }
+
+    conflicts.extend(check_cpu_coherence(fp, detected_os.as_ref()));
 
     conflicts
 }
@@ -509,9 +570,28 @@ mod tests {
 
     #[test]
     fn partial_config_no_false_positives() {
-        // Only WebGL set, no platform or UA — can't determine OS, should pass
         let mut fp = base();
         fp.webgl_renderer = Some("ANGLE (NVIDIA)".into());
         assert!(validate_fingerprint(&fp).is_empty());
+    }
+
+    #[test]
+    fn rule7_cpu_conflicts_with_os_and_gpu() {
+        let mut fp = base();
+        fp.platform = Some("MacIntel".into());
+        fp.cpu_manufacturer = Some("amd".into());
+        assert!(!validate_fingerprint(&fp).is_empty());
+
+        let mut fp2 = base();
+        fp2.webgl_renderer = Some("Apple M2".into());
+        fp2.cpu_arch = Some("x86".into());
+        assert!(!validate_fingerprint(&fp2).is_empty());
+
+        let mut fp3 = base();
+        fp3.platform = Some("MacIntel".into());
+        fp3.webgl_renderer = Some("Apple M2".into());
+        fp3.cpu_arch = Some("arm".into());
+        fp3.cpu_manufacturer = Some("apple".into());
+        assert!(validate_fingerprint(&fp3).is_empty());
     }
 }

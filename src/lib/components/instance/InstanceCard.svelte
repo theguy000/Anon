@@ -145,10 +145,19 @@
     const mode = isAuto ? 'Auto' : 'Manual';
 
     let os = '';
-    const plat = (fp?.platform ?? fp?.global_category ?? '').toLowerCase();
-    if (plat.includes('mac') || plat.includes('darwin')) os = 'macOS';
-    else if (plat.includes('linux')) os = 'Linux';
-    else if (plat.includes('win')) os = 'Windows';
+    if (isAuto) {
+      const target = (fp?.auto_os ?? 'host').toLowerCase();
+      if (target === 'windows') os = 'Windows';
+      else if (target === 'macos') os = 'macOS';
+      else if (target === 'linux') os = 'Linux';
+      else if (target === 'any') os = 'Any OS';
+      else os = 'Host OS';
+    } else {
+      const plat = (fp?.platform ?? fp?.global_category ?? '').toLowerCase();
+      if (plat.includes('mac') || plat.includes('darwin')) os = 'macOS';
+      else if (plat.includes('linux')) os = 'Linux';
+      else if (plat.includes('win')) os = 'Windows';
+    }
 
     const gpu = fp?.webgl_renderer ?? '';
     const viewport =
@@ -156,9 +165,7 @@
     const tz = fp?.timezone ?? '';
 
     const detail = isAuto
-      ? os
-        ? `Auto · ${os}`
-        : 'Auto-generated per launch'
+      ? `Auto · ${os} · deterministic`
       : [os || 'Custom', gpu].filter(Boolean).join(' · ');
 
     const sub = [viewport, tz].filter(Boolean).join(' · ');
@@ -395,7 +402,7 @@
       </div>
     {/if}
 
-    <div class="col-name" role="cell" on:dblclick|stopPropagation={startEdit}>
+    <div class="col-name" role="cell" tabindex="-1" on:dblclick|stopPropagation={startEdit}>
       {#if editing}
         <div class="rename-wrap" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
           <input

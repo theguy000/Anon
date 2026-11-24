@@ -29,26 +29,19 @@ export function removeToast(id: string) {
 // ── Interfaces ──────────────────────────────────────────────────────────
 
 export interface FingerprintConfig {
-  // Navigator
   user_agent?: string | null;
   platform?: string | null;
   oscpu?: string | null;
-  app_code_name?: string | null;
-  app_name?: string | null;
   app_version?: string | null;
-  product?: string | null;
-  product_sub?: string | null;
-  build_id?: string | null;
   hardware_concurrency?: number | null;
   max_touch_points?: number | null;
   do_not_track?: string | null;
   language?: string | null;
-  languages?: string | null;
-  cookie_enabled?: boolean | null;
   global_privacy_control?: boolean | null;
-  online?: boolean | null;
 
-  // Screen & Display
+  cpu_arch?: string | null;
+  cpu_manufacturer?: string | null;
+
   screen_height?: number | null;
   screen_width?: number | null;
   screen_avail_height?: number | null;
@@ -59,7 +52,6 @@ export interface FingerprintConfig {
   pixel_depth?: number | null;
   device_pixel_ratio?: number | null;
 
-  // Window
   outer_height?: number | null;
   outer_width?: number | null;
   inner_height?: number | null;
@@ -67,72 +59,62 @@ export interface FingerprintConfig {
   screen_x?: number | null;
   screen_y?: number | null;
 
-  // WebGL
   webgl_renderer?: string | null;
   webgl_vendor?: string | null;
   webgl_block_if_not_defined?: boolean | null;
+  block_webgl?: boolean | null;
+  canvas_noise?: boolean | null;
 
-  // Canvas & Audio Seeds
-  canvas_seed?: number | null;
-  audio_seed?: number | null;
-
-  // AudioContext
   audio_sample_rate?: number | null;
   audio_output_latency?: number | null;
   audio_max_channel_count?: number | null;
 
-  // Fonts
-  fonts_spacing_seed?: number | null;
   fonts?: string[] | null;
 
-  // Geolocation, Timezone & Locale
   geo_latitude?: number | null;
   geo_longitude?: number | null;
   geo_accuracy?: number | null;
   timezone?: string | null;
   locale_language?: string | null;
   locale_region?: string | null;
+  locale_script?: string | null;
 
-  // WebRTC
+  block_webrtc?: boolean | null;
   webrtc_ipv4?: string | null;
   webrtc_ipv6?: string | null;
+  network_ipv4_only?: boolean | null;
 
-  // HTTP Headers
   header_user_agent?: string | null;
   header_accept_language?: string | null;
   header_accept_encoding?: string | null;
 
-  // Battery
-  battery_charging?: boolean | null;
-  battery_charging_time?: number | null;
-  battery_discharging_time?: number | null;
-  battery_level?: number | null;
-
-  // Media Devices
   media_micros?: number | null;
   media_webcams?: number | null;
   media_speakers?: number | null;
+  media_spoof_codecs?: boolean | null;
 
-  // Speech Voices
   speech_voices?: string[] | null;
+  voices_block_if_not_defined?: boolean | null;
 
-  // Behavior
-  humanize?: boolean | null;
   showcursor?: boolean | null;
-  pdf_viewer_enabled?: boolean | null;
+  enable_ublock?: boolean | null;
+  block_images?: boolean | null;
+  disable_coop?: boolean | null;
 
-  // Advanced
   allow_main_world?: boolean | null;
+  disable_world_isolation?: boolean | null;
+  allow_addon_new_tab?: boolean | null;
   force_scope_access?: boolean | null;
-  memory_saver?: boolean | null;
+  instant_animations?: boolean | null;
+  debug?: boolean | null;
 
-  // Global Preset Selection
   global_category?: string | null;
   global_preset_index?: number | null;
 
-  // AUTO mode: let camoufox's browserforge handle all fingerprinting
   auto_fingerprint?: boolean | null;
+  auto_os?: string | null;
   auto_change_window_size?: boolean | null;
+  identity_nonce?: number | null;
 }
 
 export interface ProxyConfig {
@@ -569,6 +551,18 @@ export async function updateSettings(newSettings: Partial<AppSettings>) {
   } catch (e) {
     console.error('Failed to update settings', e);
     addToast(`Failed to save settings: ${e}`, 'error');
+  }
+}
+
+export async function regenerateIdentity(id: string): Promise<number> {
+  try {
+    const nextNonce = await invoke<number>('regenerate_identity', { id });
+    await loadInstances();
+    addToast('Generated a new hardware identity for next launch', 'success');
+    return nextNonce;
+  } catch (e) {
+    addToast(`Failed to regenerate identity: ${e}`, 'error');
+    throw e;
   }
 }
 

@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone, Default)]
@@ -28,6 +29,111 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
+static LEGACY_MIGRATION_ONCE: Once = Once::new();
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn move_entry(src: &Path, dst: &Path) -> io::Result<()> {
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    if src.is_dir() {
+        copy_dir_recursive(src, dst)?;
+        std::fs::remove_dir_all(src)
+    } else {
+        std::fs::copy(src, dst)?;
+        std::fs::remove_file(src)
+    }
+}
+
+/// Move legacy user data (`profiles/`, `settings.json`, `geo_cache.json`) out of
+/// the `camoufox/` engine directory into its sibling app-data root without
+/// overwriting any existing destination entries.
+pub fn migrate_legacy_user_data(legacy_engine_dir: &Path, data_dir: &Path) -> io::Result<()> {
+    if !legacy_engine_dir.exists() || legacy_engine_dir == data_dir {
+        return Ok(());
+    }
+    std::fs::create_dir_all(data_dir)?;
+
+    for file_name in ["settings.json", "geo_cache.json"] {
+        let src = legacy_engine_dir.join(file_name);
+        let dst = data_dir.join(file_name);
+        if src.exists() && !dst.exists() {
+            move_entry(&src, &dst)?;
+        }
+    }
+
+    let legacy_profiles = legacy_engine_dir.join("profiles");
+    let target_profiles = data_dir.join("profiles");
+    if legacy_profiles.is_dir() {
+        if !target_profiles.exists() {
+            move_entry(&legacy_profiles, &target_profiles)?;
+        } else {
+            for entry in std::fs::read_dir(&legacy_profiles)? {
+                let entry = entry?;
+                let dst = target_profiles.join(entry.file_name());
+                if !dst.exists() {
+                    move_entry(&entry.path(), &dst)?;
+                }
+            }
+            if std::fs::read_dir(&legacy_profiles)?.next().is_none() {
+                let _ = std::fs::remove_dir(&legacy_profiles);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Invalid target path: {}", path.display()))?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+
+    let json = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("data.json");
+    let tmp_path = parent.join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
+
+    std::fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to persist {}: {}", path.display(), e));
+    }
+    Ok(())
+}
+
+/// Parent user-data directory (`%APPDATA%\Anon`), sibling to `camoufox/`.
+pub async fn get_data_dir(app: &AppHandle) -> PathBuf {
+    let data_dir = app.path().app_data_dir().unwrap();
+    if !data_dir.exists() {
+        std::fs::create_dir_all(&data_dir).unwrap();
+    }
+    LEGACY_MIGRATION_ONCE.call_once(|| {
+        let legacy_engine_dir = data_dir.join("camoufox");
+        if let Err(e) = migrate_legacy_user_data(&legacy_engine_dir, &data_dir) {
+            eprintln!("Legacy user data migration warning: {}", e);
+        }
+    });
+    data_dir
+}
+
 pub async fn get_app_dir(app: &AppHandle) -> PathBuf {
     let mut path = app.path().app_data_dir().unwrap();
     path.push("camoufox");
@@ -37,14 +143,39 @@ pub async fn get_app_dir(app: &AppHandle) -> PathBuf {
     path
 }
 
-pub async fn get_camoufox_binary(app: &AppHandle) -> Option<PathBuf> {
-    let mut exe_path = get_app_dir(app).await;
-    exe_path.push("camoufox.exe");
-    if exe_path.exists() {
-        Some(exe_path)
-    } else {
-        None
+pub(crate) fn resolve_camoufox_binary(
+    custom_path: Option<&str>,
+    engine_dir: &Path,
+) -> Option<PathBuf> {
+    if let Some(raw) = custom_path.map(str::trim).filter(|s| !s.is_empty()) {
+        let candidate = PathBuf::from(raw);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if candidate.is_dir() {
+            for name in ["camoufox.exe", "camoufox"] {
+                let nested = candidate.join(name);
+                if nested.is_file() {
+                    return Some(nested);
+                }
+            }
+        }
+        return None;
     }
+
+    for name in ["camoufox.exe", "camoufox"] {
+        let exe = engine_dir.join(name);
+        if exe.is_file() {
+            return Some(exe);
+        }
+    }
+    None
+}
+
+pub async fn get_camoufox_binary(app: &AppHandle) -> Option<PathBuf> {
+    let engine_dir = get_app_dir(app).await;
+    let settings = crate::settings::load_settings(app).await;
+    resolve_camoufox_binary(settings.camoufox_path.as_deref(), &engine_dir)
 }
 
 pub struct ReleaseInfo {
@@ -1032,5 +1163,104 @@ mod tests {
         assert!(backup_dir.join("camoufox.exe").is_file());
 
         drop(locked_dest);
+    }
+
+    #[test]
+    fn migrate_legacy_user_data_moves_entries_and_is_idempotent() {
+        let tmp = TempDir::new("anon-migrate");
+        let data_dir = tmp.path().join("Anon");
+        let engine_dir = data_dir.join("camoufox");
+        std::fs::create_dir_all(engine_dir.join("profiles").join("p1")).unwrap();
+        std::fs::write(
+            engine_dir
+                .join("profiles")
+                .join("p1")
+                .join("anon_config.json"),
+            b"{\"id\":\"p1\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            engine_dir.join("settings.json"),
+            b"{\"skip_wipe_confirmation\":true}",
+        )
+        .unwrap();
+        std::fs::write(engine_dir.join("geo_cache.json"), b"{}").unwrap();
+        std::fs::write(engine_dir.join("camoufox.exe"), b"bin").unwrap();
+
+        migrate_legacy_user_data(&engine_dir, &data_dir).unwrap();
+        assert!(data_dir
+            .join("profiles")
+            .join("p1")
+            .join("anon_config.json")
+            .is_file());
+        assert!(data_dir.join("settings.json").is_file());
+        assert!(data_dir.join("geo_cache.json").is_file());
+        assert!(engine_dir.join("camoufox.exe").is_file());
+        assert!(!engine_dir.join("settings.json").exists());
+
+        std::fs::write(
+            data_dir.join("settings.json"),
+            b"{\"skip_wipe_confirmation\":false}",
+        )
+        .unwrap();
+        std::fs::write(
+            engine_dir.join("settings.json"),
+            b"{\"skip_wipe_confirmation\":true}",
+        )
+        .unwrap();
+        migrate_legacy_user_data(&engine_dir, &data_dir).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(data_dir.join("settings.json")).unwrap(),
+            "{\"skip_wipe_confirmation\":false}"
+        );
+    }
+
+    #[test]
+    fn resolve_camoufox_binary_honors_custom_file_and_dir_paths() {
+        let tmp = TempDir::new("anon-bin");
+        let engine_dir = tmp.path().join("engine");
+        let custom_dir = tmp.path().join("custom");
+        std::fs::create_dir_all(&engine_dir).unwrap();
+        std::fs::create_dir_all(&custom_dir).unwrap();
+        let default_bin = engine_dir.join("camoufox.exe");
+        let custom_bin = custom_dir.join("camoufox.exe");
+        std::fs::write(&default_bin, b"default").unwrap();
+        std::fs::write(&custom_bin, b"custom").unwrap();
+
+        assert_eq!(
+            resolve_camoufox_binary(None, &engine_dir),
+            Some(default_bin)
+        );
+        assert_eq!(
+            resolve_camoufox_binary(Some(custom_bin.to_str().unwrap()), &engine_dir),
+            Some(custom_bin.clone())
+        );
+        assert_eq!(
+            resolve_camoufox_binary(Some(custom_dir.to_str().unwrap()), &engine_dir),
+            Some(custom_bin)
+        );
+        assert_eq!(
+            resolve_camoufox_binary(
+                Some(tmp.path().join("missing.exe").to_str().unwrap()),
+                &engine_dir
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn write_json_atomic_replaces_existing_file_cleanly() {
+        let tmp = TempDir::new("anon-atomic");
+        let path = tmp.path().join("config.json");
+        write_json_atomic(&path, &serde_json::json!({"v": 1})).unwrap();
+        write_json_atomic(&path, &serde_json::json!({"v": 2})).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"v\": 2"));
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
     }
 }

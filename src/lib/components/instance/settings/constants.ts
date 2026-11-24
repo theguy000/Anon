@@ -4,9 +4,6 @@ export const NAV_OSCPUS = [
   "Intel Mac OS X 10_15_7",
   "Linux x86_64",
 ];
-export const NAV_BUILD_IDS = ["20181001000000", "20100101"];
-export const NAV_APP_NAMES = ["Netscape"];
-export const NAV_PRODUCT_SUBS = ["20030107", "20100101"];
 
 export const PLATFORMS = [
   "Win32",

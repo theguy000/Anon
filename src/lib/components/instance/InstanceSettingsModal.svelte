@@ -1,31 +1,40 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
-  import { updateInstanceSettings, updateInstanceProxy, updateInstanceNotes, updateInstanceTags, settings } from "$lib/store";
-  import type { FingerprintConfig, InstanceConfig, FingerprintConflict, ProxyConfig, TagDefinition } from "$lib/store";
+  import {
+    updateInstanceSettings,
+    updateInstanceProxy,
+    updateInstanceNotes,
+    updateInstanceTags,
+    regenerateIdentity,
+    runningInstances,
+    settings,
+    fingerprintPresets,
+  } from "$lib/store";
+  import type {
+    FingerprintConfig,
+    InstanceConfig,
+    FingerprintConflict,
+    ProxyConfig,
+    TagDefinition,
+    Preset,
+  } from "$lib/store";
 
-  // Sections
   import NavigatorSection from "./settings/NavigatorSection.svelte";
   import ScreenDisplaySection from "./settings/ScreenDisplaySection.svelte";
   import WindowSection from "./settings/WindowSection.svelte";
   import WebGLSection from "./settings/WebGLSection.svelte";
-  import CanvasAudioSeedsSection from "./settings/CanvasAudioSeedsSection.svelte";
   import AudioContextSection from "./settings/AudioContextSection.svelte";
   import FontsSection from "./settings/FontsSection.svelte";
   import GeolocationTimezoneLocaleSection from "./settings/GeolocationTimezoneLocaleSection.svelte";
   import WebRTCIPSection from "./settings/WebRTCIPSection.svelte";
   import HttpHeadersSection from "./settings/HttpHeadersSection.svelte";
-  import BatterySection from "./settings/BatterySection.svelte";
   import SpeechVoicesSection from "./settings/SpeechVoicesSection.svelte";
   import MediaDevicesSection from "./settings/MediaDevicesSection.svelte";
   import BehaviorSection from "./settings/BehaviorSection.svelte";
   import AdvancedSection from "./settings/AdvancedSection.svelte";
   import ProxySection from "./settings/ProxySection.svelte";
   import { WINDOW_PRESETS } from "./settings/constants";
-  import { fingerprintPresets } from "$lib/store";
-  import type { Preset } from "$lib/store";
-
-  // Styles
   import "./settings/InstanceSettingsModal.css";
 
   const dispatch = createEventDispatcher();
@@ -33,47 +42,51 @@
   export let show = false;
   export let instance: InstanceConfig;
 
-  // Tab state
-  let activeTab: 'fingerprint' | 'proxy' | 'notes' = 'fingerprint';
+  let activeTab: "fingerprint" | "proxy" | "notes" = "fingerprint";
 
   let fp: FingerprintConfig = {};
   let proxyConfig: ProxyConfig = {};
   let saving = false;
+  let regenerating = false;
   let conflicts: FingerprintConflict[] = [];
   let sections: Record<string, boolean> = {};
 
-  // Notes
-  let notes = '';
-
-  // Tags
+  let notes = "";
   let instanceTags: string[] = [];
   $: availableTags = ($settings.tag_definitions ?? []) as TagDefinition[];
+  $: isRunning = instance ? $runningInstances.has(instance.id) : false;
 
-  // State helpers
   let selectedScreenPreset = "";
   let selectedWebglPreset = "";
   let selectedLocale = "";
   let customWebgl = false;
 
-  // Global preset state
   let globalCategory = "";
   let globalPresetIndex = -1;
 
-  // AUTO mode state
-  let autoMode = false;
+  let autoMode = true;
+  let autoOs = "host";
   let autoChangeWindowSize = true;
   let autoWindowPresetIndex = -1;
-  const accentGreen = '#10b981';
-  const accentGreenBg = 'rgba(16, 185, 129, 0.05)';
 
-  // Initialize once per open. Keyed on the open transition rather than on
-  // `instance` itself: every store refresh hands this component a NEW instance
-  // object, so re-initializing on identity wiped in-progress edits mid-save.
-  // handleSave awaits updateInstanceNotes/Tags, both of which call
-  // loadInstances(), so the old version reset autoMode to its stored value
-  // before the fingerprint payload was assembled — silently saving nothing.
-  // IMPORTANT: do NOT read `fp` inside this block, or any `fp = ...`
-  // assignment will trigger re-initialization and reset values.
+  function parseLegacyProxy(raw: string | null | undefined): ProxyConfig {
+    if (!raw?.trim()) return {};
+    const m = raw
+      .trim()
+      .match(/^(socks5|socks4|https?):\/\/(?:([^:@/]+)(?::([^@/]*))?@)?([^/:]+):(\d+)/i);
+    if (!m) return {};
+    const rawScheme = m[1].toLowerCase();
+    return {
+      proxy_type: rawScheme === "https" ? "http" : rawScheme,
+      username: m[2] ? decodeURIComponent(m[2]) : null,
+      password: m[3] ? decodeURIComponent(m[3]) : null,
+      host: m[4],
+      port: Number(m[5]),
+    };
+  }
+
+  // Initialize once per open transition so background store refreshes mid-save
+  // cannot wipe in-progress edits.
   let lastInitKey = "";
   $: {
     const key = show && instance ? `${instance.id}|open` : "";
@@ -81,18 +94,22 @@
       lastInitKey = key;
       if (key) {
         fp = instance.fingerprint ? { ...instance.fingerprint } : {};
-        proxyConfig = instance.proxy_config ? { ...instance.proxy_config } : {};
-        notes = instance.notes ?? '';
+        proxyConfig = instance.proxy_config
+          ? { ...instance.proxy_config }
+          : parseLegacyProxy(instance.proxy);
+        notes = instance.notes ?? "";
         instanceTags = instance.tags ? [...instance.tags] : [];
         saving = false;
-        activeTab = 'fingerprint';
+        conflicts = [];
+        activeTab = "fingerprint";
         selectedScreenPreset = "";
         selectedWebglPreset = "";
         selectedLocale = "";
         customWebgl = !!instance.fingerprint?.webgl_renderer;
         globalCategory = instance.fingerprint?.global_category ?? "";
         globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
-        autoMode = instance.fingerprint?.auto_fingerprint === true;
+        autoMode = instance.fingerprint?.auto_fingerprint !== false;
+        autoOs = instance.fingerprint?.auto_os ?? "host";
         autoChangeWindowSize = instance.fingerprint?.auto_change_window_size !== false;
         autoWindowPresetIndex = WINDOW_PRESETS.findIndex(
           (p) =>
@@ -103,21 +120,19 @@
     }
   }
 
-  // ── Save / Reset ───────────────────────────────────────────────────────────
-  // Mapping from preset fields → fp fields: [presetSection, presetKey, fpKey]
   const PRESET_TO_FP: [keyof Preset, string, keyof FingerprintConfig][] = [
-    ["navigator", "userAgent",           "user_agent"],
-    ["navigator", "platform",            "platform"],
+    ["navigator", "userAgent", "user_agent"],
+    ["navigator", "platform", "platform"],
     ["navigator", "hardwareConcurrency", "hardware_concurrency"],
-    ["navigator", "maxTouchPoints",      "max_touch_points"],
-    ["screen",    "width",               "screen_width"],
-    ["screen",    "height",              "screen_height"],
-    ["screen",    "colorDepth",          "color_depth"],
-    ["screen",    "availWidth",          "screen_avail_width"],
-    ["screen",    "availHeight",         "screen_avail_height"],
-    ["screen",    "devicePixelRatio",    "device_pixel_ratio"],
-    ["webgl",     "unmaskedVendor",      "webgl_vendor"],
-    ["webgl",     "unmaskedRenderer",    "webgl_renderer"],
+    ["navigator", "maxTouchPoints", "max_touch_points"],
+    ["screen", "width", "screen_width"],
+    ["screen", "height", "screen_height"],
+    ["screen", "colorDepth", "color_depth"],
+    ["screen", "availWidth", "screen_avail_width"],
+    ["screen", "availHeight", "screen_avail_height"],
+    ["screen", "devicePixelRatio", "device_pixel_ratio"],
+    ["webgl", "unmaskedVendor", "webgl_vendor"],
+    ["webgl", "unmaskedRenderer", "webgl_renderer"],
   ];
 
   function applyGlobalPreset() {
@@ -125,8 +140,6 @@
       const presets = $fingerprintPresets[globalCategory];
       if (presets && presets[globalPresetIndex]) {
         const preset = presets[globalPresetIndex];
-
-        // Apply mapped fields
         for (const [section, presetKey, fpKey] of PRESET_TO_FP) {
           const sectionObj = preset[section];
           if (sectionObj && typeof sectionObj === "object" && presetKey in sectionObj) {
@@ -134,16 +147,12 @@
             if (val !== undefined) (fp as Record<string, unknown>)[fpKey] = val;
           }
         }
-
-        // Top-level fields
         if (preset.speechVoices !== undefined) fp.speech_voices = preset.speechVoices;
-
-        // Side effects
         if (preset.screen) selectedScreenPreset = "";
-        if (preset.webgl) { customWebgl = true; selectedWebglPreset = "custom"; }
-
-        // Trigger Svelte reactivity — spread into a new object so that
-        // bind:fp in child components sees a new reference and re-renders.
+        if (preset.webgl) {
+          customWebgl = true;
+          selectedWebglPreset = "custom";
+        }
         fp = { ...fp };
       }
     }
@@ -151,50 +160,61 @@
 
   let conflictsBanner: HTMLDivElement;
 
+  async function handleRegenerate() {
+    if (!instance || isRunning || regenerating) return;
+    regenerating = true;
+    try {
+      const nextNonce = await regenerateIdentity(instance.id);
+      fp = { ...fp, identity_nonce: nextNonce };
+    } catch {
+      // Toasted in store
+    } finally {
+      regenerating = false;
+    }
+  }
+
   async function handleSave() {
     saving = true;
     conflicts = [];
     try {
-      // Always save notes and tags
       const trimmedNotes = notes.trim();
       await updateInstanceNotes(instance.id, trimmedNotes || null);
       await updateInstanceTags(instance.id, instanceTags);
 
-      if (activeTab === 'proxy') {
-        // Save proxy settings
-        const hasProxy = proxyConfig.proxy_type && proxyConfig.host && proxyConfig.port;
-        await updateInstanceProxy(instance.id, hasProxy ? proxyConfig : null);
-        dispatch("close");
-      } else {
-        // Save fingerprint settings
-        // Persist the global preset selection
-        fp.global_category = globalCategory || null;
-        fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
-        // Persist AUTO mode settings
-        fp.auto_fingerprint = autoMode || null;
-        fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
-        if (autoMode) {
-          const preset = !autoChangeWindowSize && autoWindowPresetIndex >= 0 ? WINDOW_PRESETS[autoWindowPresetIndex] : null;
-          if (preset) {
-            fp.outer_width = preset.w;
-            fp.outer_height = preset.h;
-          } else {
-            fp.outer_width = null;
-            fp.outer_height = null;
-          }
-          fp.inner_width = null;
-          fp.inner_height = null;
-        }
-        const warnings = await updateInstanceSettings(instance.id, fp);
-        if (warnings.length > 0) {
-          conflicts = warnings;
-          sections["webgl"] = true;
-          requestAnimationFrame(() => {
-            conflictsBanner?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          });
+      const hasProxy = !!(proxyConfig.proxy_type && proxyConfig.host && proxyConfig.port);
+      await updateInstanceProxy(instance.id, hasProxy ? proxyConfig : null);
+
+      fp.global_category = globalCategory || null;
+      fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
+      fp.auto_fingerprint = autoMode;
+      fp.auto_os = autoMode ? (autoOs === "host" ? null : autoOs) : null;
+      fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
+      if (autoMode) {
+        const preset =
+          !autoChangeWindowSize && autoWindowPresetIndex >= 0
+            ? WINDOW_PRESETS[autoWindowPresetIndex]
+            : null;
+        if (preset) {
+          fp.outer_width = preset.w;
+          fp.outer_height = preset.h;
         } else {
-          dispatch("close");
+          fp.outer_width = null;
+          fp.outer_height = null;
         }
+        fp.inner_width = null;
+        fp.inner_height = null;
+      }
+
+      const warnings = await updateInstanceSettings(instance.id, fp);
+      if (warnings.length > 0) {
+        conflicts = warnings;
+        activeTab = "fingerprint";
+        sections["webgl"] = true;
+        requestAnimationFrame(() => {
+          conflictsBanner?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      } else {
+        dispatch("close");
       }
     } catch (e) {
       console.error(e);
@@ -202,254 +222,384 @@
       saving = false;
     }
   }
+
   function handleReset() {
-    if (activeTab === 'proxy') {
+    if (activeTab === "proxy") {
       proxyConfig = {};
-    } else if (activeTab === 'notes') {
-      notes = '';
+    } else if (activeTab === "notes") {
+      notes = "";
       instanceTags = [];
     } else {
-      fp = {};
+      fp = { auto_fingerprint: true, auto_os: "host", auto_change_window_size: true };
       selectedScreenPreset = "";
       selectedWebglPreset = "";
       selectedLocale = "";
       customWebgl = false;
       globalCategory = "";
       globalPresetIndex = -1;
-      autoMode = false;
+      autoMode = true;
+      autoOs = "host";
       autoChangeWindowSize = true;
       autoWindowPresetIndex = -1;
     }
   }
+
   function handleClose() {
     dispatch("close");
   }
 </script>
 
-<Modal {show} on:close={handleClose} maxWidth="680px">
+<Modal {show} on:close={handleClose} maxWidth="680px" ariaLabel="Instance settings">
   <div class="settings-modal">
     <div class="settings-header">
       <div class="header-left">
-        <h3>INSTANCE SETTINGS</h3>
+        <h3>Instance settings</h3>
         {#if instance}
           <div class="instance-name">
-            <span class="instance-name-value">{instance.name.toUpperCase()}</span>
+            <span class="instance-name-value">{instance.name}</span>
           </div>
         {/if}
       </div>
       <button class="close-btn" aria-label="Close" on:click={handleClose}>
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1"
-          ><line x1="18" y1="6" x2="6" y2="18" /><line
-            x1="6"
-            y1="6"
-            x2="18"
-            y2="18"
-          /></svg
-        >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
       </button>
     </div>
 
     <div class="tab-bar">
       <button
         class="tab-item"
-        class:tab-active={activeTab === 'fingerprint'}
-        on:click={() => activeTab = 'fingerprint'}
+        class:tab-active={activeTab === "fingerprint"}
+        on:click={() => (activeTab = "fingerprint")}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M7.864 4.243C9.05 3.457 10.471 3 12 3c4.142 0 7.5 3.358 7.5 7.5 0 2.919-.556 5.709-1.568 8.269M5.743 6.364C4.957 7.55 4.5 8.971 4.5 10.5c0 1.468-.421 2.837-1.15 3.993M5.339 18.052C7.148 16.056 8.25 13.407 8.25 10.5 8.25 8.429 9.929 6.75 12 6.75s3.75 1.679 3.75 3.75c0 .527-.021 1.049-.064 1.565M12 10.5c0 3.723-1.356 7.128-3.601 9.751M15.033 15.654c-.548 1.92-1.394 3.714-2.485 5.33"/>
-        </svg>
-        FINGERPRINT
+        Fingerprint
       </button>
       <button
         class="tab-item"
-        class:tab-active={activeTab === 'proxy'}
-        on:click={() => activeTab = 'proxy'}
+        class:tab-active={activeTab === "proxy"}
+        on:click={() => (activeTab = "proxy")}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
-        </svg>
-        PROXY
+        Proxy
       </button>
       <button
         class="tab-item"
-        class:tab-active={activeTab === 'notes'}
-        on:click={() => activeTab = 'notes'}
+        class:tab-active={activeTab === "notes"}
+        on:click={() => (activeTab = "notes")}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-        </svg>
-        NOTES
+        Notes & tags
       </button>
     </div>
 
     <div class="settings-body">
-      {#if activeTab === 'fingerprint'}
-      <!-- AUTO MODE -->
-      <div class="auto-mode-panel section-group" style="padding: 1rem; border: 1px solid {autoMode ? accentGreen : 'var(--panel-border)'}; background: {autoMode ? accentGreenBg : 'rgba(255, 255, 255, 0.02)'}; margin-bottom: 1rem; transition: border-color 0.2s, background 0.2s;">
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <h4 style="margin: 0; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; color: {autoMode ? accentGreen : 'var(--text-primary)'};">AUTO MODE</h4>
-            <span style="font-size: 0.6rem; letter-spacing: 0.05em; color: var(--text-secondary);">BROWSERFORGE FINGERPRINTING</span>
-          </div>
-          <button
-            class="btn {autoMode ? 'btn-active' : ''}"
-            style="font-size: 0.6rem; padding: 4px 12px; min-width: 50px; letter-spacing: 0.05em; {autoMode ? `background: ${accentGreen}; color: #000; border-color: ${accentGreen};` : ''}"
-            on:click={() => { autoMode = !autoMode; }}
-          >
-            {autoMode ? 'ON' : 'OFF'}
-          </button>
-        </div>
-        {#if autoMode}
-          <p style="margin: 12px 0 0; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 0.03em; line-height: 1.5;">
-            Draws navigator, screen, WebGL, fonts and voices from a real captured browser, and keeps canvas, audio and font-spacing hashes stable for the life of this instance. Timezone, locale and position are resolved through this instance's proxy, so they agree with its exit IP rather than this machine.
-          </p>
-          <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <span style="font-size: 0.58rem; letter-spacing: 0.08em; color: var(--text-primary);">CHANGE WINDOW SIZE EACH LAUNCH</span>
-              <span style="font-size: 0.55rem; letter-spacing: 0.03em; color: var(--text-secondary);">
-                {autoChangeWindowSize
-                  ? 'Randomizes window size and position every launch.'
-                  : 'Keeps window size and position deterministic for the selected profile.'}
-              </span>
+      {#if activeTab === "fingerprint"}
+        <div class="auto-panel" class:auto-on={autoMode}>
+          <div class="auto-head">
+            <div class="auto-title-group">
+              <span class="auto-title">Auto fingerprinting</span>
+              <span class="auto-sub">Camoufox v159 deterministic identity</span>
             </div>
             <button
-              class="btn {autoChangeWindowSize ? 'btn-active' : ''}"
-              style="font-size: 0.58rem; padding: 4px 10px; min-width: 50px; letter-spacing: 0.05em; {autoChangeWindowSize ? `background: ${accentGreen}; color: #000; border-color: ${accentGreen};` : ''}"
-              on:click={() => { autoChangeWindowSize = !autoChangeWindowSize; }}
+              type="button"
+              class="btn btn-toggle {autoMode ? 'btn-active' : ''}"
+              on:click={() => (autoMode = !autoMode)}
             >
-              {autoChangeWindowSize ? 'ON' : 'OFF'}
+              {autoMode ? "On" : "Off"}
             </button>
           </div>
-          <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px; opacity: {autoChangeWindowSize ? 0.6 : 1};">
-            <label for="auto-window-size-preset" style="font-size: 0.58rem; letter-spacing: 0.08em; color: var(--text-primary);">DEFAULT WINDOW SIZE PRESET</label>
-            <select
-              id="auto-window-size-preset"
-              class="input-field"
-              style="font-size: 0.65rem;"
-              bind:value={autoWindowPresetIndex}
-              disabled={autoChangeWindowSize}
-            >
-              <option value={-1}>AUTO DEFAULT</option>
-              {#each WINDOW_PRESETS as p, i}
-                <option value={i}>{p.label}</option>
-              {/each}
-            </select>
-            <span style="font-size: 0.54rem; letter-spacing: 0.03em; color: var(--text-secondary);">
-              Applies when window-size changing is OFF.
-            </span>
-          </div>
-        {/if}
-      </div>
 
-      {#if !autoMode}
-      <div class="global-preset-selector section-group" style="padding: 1rem; border: 1px solid var(--panel-border); background: rgba(255, 255, 255, 0.02); margin-bottom: 1rem;">
-        <h4 style="margin-top: 0; margin-bottom: 15px; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; color: var(--text-primary); border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">GLOBAL PROFILE PRESET</h4>
-        <div class="field-row">
-          <div class="field" style="flex: 1;">
-            <label for="globalCategory">OS Profile</label>
-            <select id="globalCategory" class="input-field" style="font-family: inherit; text-transform: uppercase; letter-spacing: 0.05em;" bind:value={globalCategory} on:change={() => { globalPresetIndex = -1; }}>
-              <option value="">SELECT OS</option>
-              {#each Object.keys($fingerprintPresets || {}) as cat}
-                <option value={cat}>{cat.toUpperCase()}</option>
-              {/each}
-            </select>
-          </div>
-          <div class="field" style="flex: 2;">
-            <label for="globalPresetIndex">Profile Preset</label>
-            <select id="globalPresetIndex" class="input-field" style="font-family: inherit; text-transform: uppercase; letter-spacing: 0.05em;" bind:value={globalPresetIndex} disabled={!globalCategory}>
-              <option value={-1}>SELECT PRESET</option>
-              {#if globalCategory && $fingerprintPresets[globalCategory]}
-                {#each $fingerprintPresets[globalCategory] as preset, i}
-                  <option value={i}>PRESET {i + 1} ({preset.screen?.width}X{preset.screen?.height}, {preset.navigator?.hardwareConcurrency} CORES, {preset.webgl?.unmaskedVendor?.toUpperCase()})</option>
-                {/each}
-              {/if}
-            </select>
-          </div>
-        </div>
-        <div class="action-row" style="margin-top: 15px; text-align: right;">
-           <button class="btn btn-primary" disabled={globalPresetIndex === -1} on:click={applyGlobalPreset}>
-             APPLY GLOBAL PROFILE
-           </button>
-        </div>
-      </div>
+          {#if autoMode}
+            <p class="auto-desc">
+              Keeps one stable OS, GPU, CPU, font, voice, and media-device profile across relaunches. Timezone, locale, and coordinates follow the instance's exit IP.
+            </p>
 
-      <NavigatorSection bind:fp bind:open={sections["nav"]} />
-      <ScreenDisplaySection bind:fp bind:open={sections["screen"]} bind:selectedScreenPreset />
-      <WindowSection bind:fp bind:open={sections["window"]} />
-      <div bind:this={conflictsBanner}>
-        <WebGLSection bind:fp bind:open={sections["webgl"]} bind:selectedWebglPreset bind:customWebgl {conflicts} />
-      </div>
-      <CanvasAudioSeedsSection bind:fp bind:open={sections["seeds"]} />
-      <AudioContextSection bind:fp bind:open={sections["audio"]} />
-      <FontsSection bind:fp bind:open={sections["fonts"]} />
-      <GeolocationTimezoneLocaleSection bind:fp bind:open={sections["geo"]} bind:selectedLocale />
-      <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} />
-      <HttpHeadersSection bind:fp bind:open={sections["headers"]} />
-      <BatterySection bind:fp bind:open={sections["battery"]} />
-      <SpeechVoicesSection bind:fp bind:open={sections["voices"]} />
-      <MediaDevicesSection bind:fp bind:open={sections["media"]} />
-      <BehaviorSection bind:fp bind:open={sections["behavior"]} />
-      <AdvancedSection bind:fp bind:open={sections["advanced"]} />
-      {/if}
-      {/if}
-
-      {#if activeTab === 'proxy'}
-      <ProxySection bind:proxyConfig />
-      {/if}
-
-      {#if activeTab === 'notes'}
-      <div class="notes-tab-content">
-        <div class="notes-field">
-          <label for="instance-notes">NOTES</label>
-          <textarea
-            id="instance-notes"
-            class="notes-textarea"
-            placeholder="Add notes about this instance..."
-            bind:value={notes}
-            rows="5"
-          ></textarea>
-        </div>
-        {#if availableTags.length > 0}
-          <div class="tags-field">
-            <span class="field-section-label">Tags</span>
-            <div class="tags-selector">
-              {#each availableTags as tagDef}
+            <div class="auto-row">
+              <div class="field" style="flex: 1;">
+                <label for="auto-os-select">Target OS</label>
+                <select id="auto-os-select" class="input-field" bind:value={autoOs}>
+                  <option value="host">Host OS (recommended)</option>
+                  <option value="any">Any OS (Windows / macOS / Linux)</option>
+                  <option value="windows">Windows</option>
+                  <option value="macos">macOS</option>
+                  <option value="linux">Linux</option>
+                </select>
+              </div>
+              <div class="auto-regen-wrap">
                 <button
-                  class="tag-toggle"
-                  class:tag-active={instanceTags.includes(tagDef.label)}
-                  style="border-color: {tagDef.color}; color: {instanceTags.includes(tagDef.label) ? '#000' : tagDef.color}; background: {instanceTags.includes(tagDef.label) ? tagDef.color : 'transparent'}"
-                  on:click={() => {
-                    if (instanceTags.includes(tagDef.label)) {
-                      instanceTags = instanceTags.filter(t => t !== tagDef.label);
-                    } else {
-                      instanceTags = [...instanceTags, tagDef.label];
-                    }
-                  }}
+                  type="button"
+                  class="btn btn-sm"
+                  disabled={isRunning || regenerating}
+                  title={isRunning ? "Stop instance before regenerating identity" : "Roll a new deterministic hardware identity"}
+                  on:click={handleRegenerate}
                 >
-                  {tagDef.label}
+                  {regenerating ? "Regenerating…" : "Regenerate identity"}
                 </button>
-              {/each}
+              </div>
+            </div>
+
+            <div class="auto-divider"></div>
+
+            <div class="toggle-item">
+              <div class="label-group">
+                <span class="auto-label">Vary window size each launch</span>
+                <span class="field-hint">
+                  {autoChangeWindowSize
+                    ? "Varies outer window geometry per launch while keeping hardware fixed."
+                    : "Keeps deterministic window size and position."}
+                </span>
+              </div>
+              <button
+                type="button"
+                class="btn btn-toggle {autoChangeWindowSize ? 'btn-active' : ''}"
+                on:click={() => (autoChangeWindowSize = !autoChangeWindowSize)}
+              >
+                {autoChangeWindowSize ? "On" : "Off"}
+              </button>
+            </div>
+
+            {#if !autoChangeWindowSize}
+              <div class="field mt">
+                <label for="auto-window-size-preset">Fixed window preset</label>
+                <select
+                  id="auto-window-size-preset"
+                  class="input-field"
+                  bind:value={autoWindowPresetIndex}
+                >
+                  <option value={-1}>Auto (90% of available screen)</option>
+                  {#each WINDOW_PRESETS as p, i}
+                    <option value={i}>{p.label}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+          {/if}
+        </div>
+
+        {#if autoMode}
+          <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} autoMode={true} />
+          <BehaviorSection bind:fp bind:open={sections["behavior"]} autoMode={true} />
+          <AdvancedSection bind:fp bind:open={sections["advanced"]} />
+        {:else}
+          <div class="preset-panel">
+            <div class="preset-head">Global profile preset</div>
+            <div class="field-row">
+              <div class="field" style="flex: 1;">
+                <label for="globalCategory">OS profile</label>
+                <select
+                  id="globalCategory"
+                  class="input-field"
+                  bind:value={globalCategory}
+                  on:change={() => (globalPresetIndex = -1)}
+                >
+                  <option value="">Select OS</option>
+                  {#each Object.keys($fingerprintPresets || {}) as cat}
+                    <option value={cat}>{cat}</option>
+                  {/each}
+                </select>
+              </div>
+              <div class="field" style="flex: 2;">
+                <label for="globalPresetIndex">Profile preset</label>
+                <select
+                  id="globalPresetIndex"
+                  class="input-field"
+                  bind:value={globalPresetIndex}
+                  disabled={!globalCategory}
+                >
+                  <option value={-1}>Select preset</option>
+                  {#if globalCategory && $fingerprintPresets[globalCategory]}
+                    {#each $fingerprintPresets[globalCategory] as preset, i}
+                      <option value={i}>
+                        Preset {i + 1} ({preset.screen?.width}×{preset.screen?.height}, {preset.navigator?.hardwareConcurrency} cores, {preset.webgl?.unmaskedVendor})
+                      </option>
+                    {/each}
+                  {/if}
+                </select>
+              </div>
+            </div>
+            <div class="preset-actions">
+              <button
+                type="button"
+                class="btn btn-primary btn-sm"
+                disabled={globalPresetIndex === -1}
+                on:click={applyGlobalPreset}
+              >
+                Apply preset
+              </button>
             </div>
           </div>
+
+          <NavigatorSection bind:fp bind:open={sections["nav"]} />
+          <ScreenDisplaySection bind:fp bind:open={sections["screen"]} bind:selectedScreenPreset />
+          <WindowSection bind:fp bind:open={sections["window"]} />
+          <div bind:this={conflictsBanner}>
+            <WebGLSection
+              bind:fp
+              bind:open={sections["webgl"]}
+              bind:selectedWebglPreset
+              bind:customWebgl
+              {conflicts}
+            />
+          </div>
+          <AudioContextSection bind:fp bind:open={sections["audio"]} />
+          <FontsSection bind:fp bind:open={sections["fonts"]} />
+          <GeolocationTimezoneLocaleSection bind:fp bind:open={sections["geo"]} bind:selectedLocale />
+          <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} />
+          <HttpHeadersSection bind:fp bind:open={sections["headers"]} />
+          <SpeechVoicesSection bind:fp bind:open={sections["voices"]} />
+          <MediaDevicesSection bind:fp bind:open={sections["media"]} />
+          <BehaviorSection bind:fp bind:open={sections["behavior"]} />
+          <AdvancedSection bind:fp bind:open={sections["advanced"]} />
         {/if}
-      </div>
+      {/if}
+
+      {#if activeTab === "proxy"}
+        <ProxySection bind:proxyConfig />
+      {/if}
+
+      {#if activeTab === "notes"}
+        <div class="notes-tab-content">
+          <div class="notes-field">
+            <label for="instance-notes">Notes</label>
+            <textarea
+              id="instance-notes"
+              class="notes-textarea"
+              placeholder="Add notes about this instance..."
+              bind:value={notes}
+              rows="5"
+            ></textarea>
+          </div>
+          {#if availableTags.length > 0}
+            <div class="tags-field">
+              <span class="field-section-label">Tags</span>
+              <div class="tags-selector">
+                {#each availableTags as tagDef}
+                  <button
+                    type="button"
+                    class="tag-toggle"
+                    class:tag-active={instanceTags.includes(tagDef.label)}
+                    style="border-color: {tagDef.color}; color: {instanceTags.includes(tagDef.label) ? '#000' : tagDef.color}; background: {instanceTags.includes(tagDef.label) ? tagDef.color : 'transparent'}"
+                    on:click={() => {
+                      if (instanceTags.includes(tagDef.label)) {
+                        instanceTags = instanceTags.filter((t) => t !== tagDef.label);
+                      } else {
+                        instanceTags = [...instanceTags, tagDef.label];
+                      }
+                    }}
+                  >
+                    {tagDef.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
       {/if}
     </div>
 
     <div class="settings-footer">
-      <button class="btn btn-danger" on:click={handleReset}>RESET ALL</button>
+      <button type="button" class="btn btn-danger btn-sm" on:click={handleReset}>Reset tab</button>
       <div class="footer-right">
-        <button class="btn" on:click={handleClose}>CANCEL</button>
-        <button class="btn btn-primary" on:click={handleSave} disabled={saving}
-          >{saving ? "SAVING..." : "SAVE"}</button
-        >
+        <button type="button" class="btn btn-sm" on:click={handleClose}>Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" on:click={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "Save changes"}
+        </button>
       </div>
     </div>
   </div>
 </Modal>
+
+<style>
+  .auto-panel {
+    padding: 14px 16px;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    background: var(--surface-recessed);
+    margin-bottom: 12px;
+  }
+
+  .auto-panel.auto-on {
+    border-color: rgba(74, 222, 128, 0.35);
+    background: var(--accent-auto-bg);
+  }
+
+  .auto-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .auto-title-group {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .auto-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-main);
+  }
+
+  .auto-panel.auto-on .auto-title {
+    color: var(--accent-auto);
+  }
+
+  .auto-sub {
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+
+  .auto-desc {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+
+  .auto-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .auto-regen-wrap {
+    flex-shrink: 0;
+  }
+
+  .auto-divider {
+    height: 1px;
+    background: var(--hairline);
+    margin: 12px 0;
+  }
+
+  .auto-label {
+    font-size: 12px;
+    color: var(--text-main);
+  }
+
+  .preset-panel {
+    padding: 14px 16px;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    background: var(--surface-recessed);
+    margin-bottom: 12px;
+  }
+
+  .preset-head {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .preset-actions {
+    margin-top: 12px;
+    display: flex;
+    justify-content: flex-end;
+  }
+</style>

@@ -1,4 +1,4 @@
-use crate::camoufox::get_app_dir;
+use crate::camoufox::{get_data_dir, write_json_atomic};
 use crate::instances::{FingerprintConfig, ProxyConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -34,9 +34,7 @@ pub struct AppSettings {
 }
 
 pub async fn get_settings_path(app: &AppHandle) -> PathBuf {
-    let mut path = get_app_dir(app).await;
-    path.push("settings.json");
-    path
+    get_data_dir(app).await.join("settings.json")
 }
 
 pub async fn load_settings(app: &AppHandle) -> AppSettings {
@@ -51,7 +49,5 @@ pub async fn load_settings(app: &AppHandle) -> AppSettings {
 
 pub async fn save_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     let path = get_settings_path(app).await;
-    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
-    Ok(())
+    write_json_atomic(&path, settings)
 }

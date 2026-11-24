@@ -7,58 +7,99 @@
   export let open: boolean = false;
 </script>
 
-<SettingsSection title="ADVANCED" bind:open>
-  <div class="toggle-item" data-tooltip="Allow the mw: prefix for evaluating JavaScript in the main world.">
+<SettingsSection title="Advanced" bind:open>
+  <div class="toggle-item">
     <div class="label-group">
-      <label for="fp-allow-main-world">ALLOW MAIN WORLD</label><span class="field-hint"
-        >ALLOW MW: PREFIX FOR MAIN-WORLD JS EVAL</span
-      >
+      <label for="fp-allow-main-world">Allow main world</label>
+      <span class="field-hint">Allow mw: prefix for main-world evaluation</span>
     </div>
-    <label class="switch"
-      ><input id="fp-allow-main-world"
+    <label class="switch">
+      <input
+        id="fp-allow-main-world"
         type="checkbox"
         checked={fp.allow_main_world ?? false}
-        on:change={(e) =>
-          fp = setBool(
-            fp,
-            "allow_main_world",
-            (e.target as HTMLInputElement).checked,
-          )}
-      /><span class="slider"></span></label
-    >
+        on:change={(e) => (fp = setBool(fp, "allow_main_world", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
   </div>
-  <div class="toggle-item mt" data-tooltip="Force content scripts to have access to the page scope.">
+  <div class="toggle-item mt">
     <div class="label-group">
-      <label for="fp-force-scope-access">FORCE SCOPE ACCESS</label><span class="field-hint"
-        >FORCE CONTENT SCOPE ACCESS</span
-      >
+      <label for="fp-disable-world-isolation">Disable world isolation</label>
+      <span class="field-hint">Run content scripts without isolated world separation</span>
     </div>
-    <label class="switch"
-      ><input id="fp-force-scope-access"
+    <label class="switch">
+      <input
+        id="fp-disable-world-isolation"
+        type="checkbox"
+        checked={fp.disable_world_isolation ?? false}
+        on:change={(e) =>
+          (fp = setBool(fp, "disable_world_isolation", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-item mt">
+    <div class="label-group">
+      <label for="fp-allow-addon-newtab">Allow addon new tab</label>
+      <span class="field-hint">Permit extensions to open tabs on launch</span>
+    </div>
+    <label class="switch">
+      <input
+        id="fp-allow-addon-newtab"
+        type="checkbox"
+        checked={fp.allow_addon_new_tab ?? false}
+        on:change={(e) =>
+          (fp = setBool(fp, "allow_addon_new_tab", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-item mt">
+    <div class="label-group">
+      <label for="fp-force-scope-access">Force scope access</label>
+      <span class="field-hint">Grant content scripts access to page scope</span>
+    </div>
+    <label class="switch">
+      <input
+        id="fp-force-scope-access"
         type="checkbox"
         checked={fp.force_scope_access ?? false}
         on:change={(e) =>
-          fp = setBool(
-            fp,
-            "force_scope_access",
-            (e.target as HTMLInputElement).checked,
-          )}
-      /><span class="slider"></span></label
-    >
+          (fp = setBool(fp, "force_scope_access", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
   </div>
-  <div class="toggle-item mt" data-tooltip="Reduce memory usage for this browser instance.">
+  <div class="toggle-item mt">
     <div class="label-group">
-      <label for="fp-memory-saver">MEMORY SAVER</label><span class="field-hint"
-        >REDUCE MEMORY USAGE FOR THIS INSTANCE</span
-      >
+      <label for="fp-instant-animations">Instant animations</label>
+      <span class="field-hint">Complete CSS/DOM transitions immediately</span>
     </div>
-    <label class="switch"
-      ><input id="fp-memory-saver"
+    <label class="switch">
+      <input
+        id="fp-instant-animations"
         type="checkbox"
-        checked={fp.memory_saver ?? false}
+        checked={fp.instant_animations ?? false}
         on:change={(e) =>
-          fp = setBool(fp, "memory_saver", (e.target as HTMLInputElement).checked)}
-      /><span class="slider"></span></label
-    >
+          (fp = setBool(fp, "instant_animations", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-item mt">
+    <div class="label-group">
+      <label for="fp-debug">Camoufox debug output</label>
+      <span class="field-hint">Emit Camoufox config diagnostics to stderr</span>
+    </div>
+    <label class="switch">
+      <input
+        id="fp-debug"
+        type="checkbox"
+        checked={fp.debug ?? false}
+        on:change={(e) => (fp = setBool(fp, "debug", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
   </div>
 </SettingsSection>

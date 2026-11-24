@@ -20,9 +20,32 @@ struct IpApiResponse {
     city: Option<String>,
 }
 
-/// Canonical proxy URL, including credentials when present.
-/// Also used as the geo-lookup cache key, so it must include the credentials:
-/// two proxies on the same host can egress from different countries.
+pub fn percent_encode_userinfo(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            b => {
+                out.push('%');
+                out.push(
+                    char::from_digit((b >> 4) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit((b & 0x0F) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Canonical proxy URL with percent-encoded credentials when present.
 pub fn proxy_url(proxy_config: &ProxyConfig) -> Result<String, String> {
     let proxy_type = proxy_config
         .proxy_type
@@ -40,25 +63,34 @@ pub fn proxy_url(proxy_config: &ProxyConfig) -> Result<String, String> {
             proxy_config.username.as_deref(),
             proxy_config.password.as_deref(),
         ) {
-            (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
-                format!("{}://{}:{}@{}:{}", proxy_type, user, pass, host, port)
-            }
-            (Some(user), _) if !user.is_empty() => {
-                format!("{}://{}@{}:{}", proxy_type, user, host, port)
-            }
+            (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => format!(
+                "{}://{}:{}@{}:{}",
+                proxy_type,
+                percent_encode_userinfo(user),
+                percent_encode_userinfo(pass),
+                host,
+                port
+            ),
+            (Some(user), _) if !user.is_empty() => format!(
+                "{}://{}@{}:{}",
+                proxy_type,
+                percent_encode_userinfo(user),
+                host,
+                port
+            ),
             _ => format!("{}://{}:{}", proxy_type, host, port),
         },
     )
 }
 
 pub fn reqwest_proxy(proxy_config: &ProxyConfig) -> Result<reqwest::Proxy, String> {
-    let proxy_url = proxy_url(proxy_config)?;
+    let url = proxy_url(proxy_config)?;
     let proxy_type = proxy_config.proxy_type.as_deref().unwrap_or_default();
 
     // reqwest speaks socks5 for both socks4 and socks5
     let url = match proxy_type {
-        "http" | "socks5" => proxy_url,
-        "socks4" => proxy_url.replacen("socks4://", "socks5://", 1),
+        "http" | "socks5" => url,
+        "socks4" => url.replacen("socks4://", "socks5://", 1),
         other => return Err(format!("Unsupported proxy type: {}", other)),
     };
 
@@ -122,5 +154,27 @@ pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, St
             dns_leak: None,
             error: Some(format!("Connection failed: {}", e)),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxy_url_percent_encodes_special_credential_characters() {
+        let cfg = ProxyConfig {
+            proxy_type: Some("http".into()),
+            host: Some("proxy.example.com".into()),
+            port: Some(8080),
+            username: Some("user@realm".into()),
+            password: Some("p@ss:w#rd/1?%20".into()),
+        };
+        let url = proxy_url(&cfg).unwrap();
+        assert_eq!(
+            url,
+            "http://user%40realm:p%40ss%3Aw%23rd%2F1%3F%2520@proxy.example.com:8080"
+        );
+        assert!(reqwest_proxy(&cfg).is_ok());
     }
 }
