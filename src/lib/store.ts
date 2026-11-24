@@ -424,6 +424,21 @@ export async function startDownload() {
   }
 }
 
+export interface EngineUpdateOutcome {
+  updated: boolean;
+  previous_version: string;
+  current_version: string;
+}
+
+export async function updateCamoufox(): Promise<EngineUpdateOutcome> {
+  const outcome = await invoke<EngineUpdateOutcome>('update_camoufox');
+  if (outcome.updated) {
+    camoufoxVersion.set(outcome.current_version);
+    await loadFingerprintPresets();
+  }
+  return outcome;
+}
+
 export async function loadInstances() {
   try {
     const list = await invoke<InstanceConfig[]>('list_instances');

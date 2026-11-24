@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { fade, scale } from 'svelte/transition';
-  import { settings, updateSettings, loadSettings, exportAllInstances, importInstances, addToast, camoufoxVersion } from '$lib/store';
+  import { settings, updateSettings, loadSettings, exportAllInstances, importInstances, addToast, camoufoxVersion, updateCamoufox } from '$lib/store';
   import type { AppSettings } from '$lib/store';
   import TagManager from './TagManager.svelte';
   import SettingsSection from '$lib/components/instance/SettingsSection.svelte';
@@ -58,6 +58,19 @@
       // Error toasted in store
     }
     input.value = '';
+  }
+
+  async function handleUpdateEngine() {
+    try {
+      const outcome = await updateCamoufox();
+      if (outcome.updated) {
+        addToast(`Engine updated to ${outcome.current_version}`, 'success');
+      } else {
+        addToast(`Engine is already up to date (${outcome.current_version})`, 'info');
+      }
+    } catch (e) {
+      addToast(`Engine update failed: ${e}`, 'error');
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -192,9 +205,12 @@
               <span class="about-label">VERSION</span>
               <span class="about-value">0.1.2</span>
             </div>
-            <div class="about-row">
+            <div class="about-row about-engine-row">
               <span class="about-label">ENGINE</span>
               <span class="about-value">{$camoufoxVersion}</span>
+              <button class="btn btn-sm engine-update-btn" on:click={handleUpdateEngine}>
+                UPDATE ENGINE
+              </button>
             </div>
           </div>
         </SettingsSection>
@@ -381,5 +397,9 @@
     font-size: 0.7rem;
     color: var(--text-main);
     letter-spacing: 0.05em;
+  }
+
+  .engine-update-btn {
+    margin-left: auto;
   }
 </style>
