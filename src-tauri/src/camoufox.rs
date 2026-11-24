@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone, Default)]
@@ -183,10 +184,46 @@ pub async fn download_and_extract(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+static ENGINE_UPDATE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+struct UpdateGuard(&'static AtomicBool);
+
+impl UpdateGuard {
+    fn acquire(flag: &'static AtomicBool) -> Result<Self, String> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self(flag))
+            .map_err(|_| "An engine update is already in progress.".to_string())
+    }
+}
+
+impl Drop for UpdateGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplaceStage {
+    Extracting,
+    Replacing,
+    Done,
+}
+
 pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
+    let _guard = UpdateGuard::acquire(&ENGINE_UPDATE_IN_FLIGHT)?;
+
     if crate::process_manager::has_running_instances() {
         return Err("Stop all running browser instances before updating the engine.".to_string());
     }
+
+    let _ = app.emit(
+        "install_progress",
+        InstallStatus {
+            status: "Checking latest release...".to_string(),
+            progress: 5,
+            ..Default::default()
+        },
+    );
 
     let app_dir = get_app_dir(app).await;
     let previous_version = get_camoufox_version(app).await;
@@ -203,17 +240,42 @@ pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
     }
 
     let zip_path = app_dir.join("camoufox.update.zip");
-    let download_result = download_release_zip(app, &release_info, &zip_path).await;
-    if let Err(err) = download_result {
-        let _ = std::fs::remove_file(&zip_path);
-        return Err(err);
-    }
+    let (file_name, downloaded, total) =
+        match download_release_zip(app, &release_info, &zip_path).await {
+            Ok(info) => info,
+            Err(err) => {
+                let _ = std::fs::remove_file(&zip_path);
+                return Err(err);
+            }
+        };
 
     let swap_result = replace_engine_from_zip(
         &app_dir,
         &zip_path,
         &release_info.version,
         crate::process_manager::has_running_instances(),
+        |stage| {
+            let status = match stage {
+                ReplaceStage::Extracting => InstallStatus {
+                    status: format!("Extracting {}...", file_name),
+                    progress: 92,
+                    downloaded: Some(downloaded),
+                    total,
+                },
+                ReplaceStage::Replacing => InstallStatus {
+                    status: "Replacing old engine...".to_string(),
+                    progress: 96,
+                    downloaded: Some(downloaded),
+                    total,
+                },
+                ReplaceStage::Done => InstallStatus {
+                    status: "Done!".to_string(),
+                    progress: 100,
+                    ..Default::default()
+                },
+            };
+            let _ = app.emit("install_progress", status);
+        },
     );
     let _ = std::fs::remove_file(&zip_path);
     swap_result?;
@@ -275,6 +337,7 @@ pub(crate) fn replace_engine_from_zip(
     zip_path: &Path,
     new_version: &str,
     has_running_instances: bool,
+    mut on_stage: impl FnMut(ReplaceStage),
 ) -> Result<(), String> {
     if has_running_instances {
         return Err("Stop all running browser instances before updating the engine.".to_string());
@@ -295,6 +358,7 @@ pub(crate) fn replace_engine_from_zip(
     std::fs::create_dir_all(&staging_dir)
         .map_err(|e| format!("Failed to create staging directory: {}", e))?;
 
+    on_stage(ReplaceStage::Extracting);
     let extract_result = (|| -> Result<(), String> {
         let file = File::open(zip_path).map_err(|e| format!("Failed to open archive: {}", e))?;
         let mut archive =
@@ -313,6 +377,7 @@ pub(crate) fn replace_engine_from_zip(
         return Err(err);
     }
 
+    on_stage(ReplaceStage::Replacing);
     if let Err(e) = std::fs::create_dir_all(&backup_dir) {
         let _ = std::fs::remove_dir_all(&staging_dir);
         return Err(format!("Failed to create backup directory: {}", e));
@@ -385,6 +450,7 @@ pub(crate) fn replace_engine_from_zip(
         )
     })?;
 
+    on_stage(ReplaceStage::Done);
     Ok(())
 }
 
@@ -589,7 +655,7 @@ mod tests {
         let zip_path = tmp.path().join("new.zip");
         write_zip(&zip_path, &[("camoufox.exe", b"new-binary")]);
 
-        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", true)
+        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", true, |_| {})
             .expect_err("update must fail when instances are running");
         assert!(err.to_lowercase().contains("running"));
         assert_eq!(
@@ -619,7 +685,7 @@ mod tests {
             ],
         );
 
-        replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false)
+        replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false, |_| {})
             .expect("replace should succeed");
 
         assert_eq!(
@@ -665,7 +731,7 @@ mod tests {
         let zip_path = tmp.path().join("bad.zip");
         write_zip(&zip_path, &[("nested/camoufox.exe", b"wrong-layout")]);
 
-        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false)
+        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false, |_| {})
             .expect_err("archive without top-level camoufox.exe must fail");
         assert!(err.contains("camoufox.exe"));
 
@@ -702,7 +768,7 @@ mod tests {
             ],
         );
 
-        replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false)
+        replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false, |_| {})
             .expect("replace should succeed");
 
         assert_eq!(
@@ -735,7 +801,7 @@ mod tests {
         let zip_path = tmp.path().join("new.zip");
         write_zip(&zip_path, &[("camoufox.exe", b"new-binary")]);
 
-        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false)
+        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false, |_| {})
             .expect_err("locked file must fail swap");
         assert!(err.contains("legacy.dll"));
 
@@ -755,5 +821,56 @@ mod tests {
         );
         assert!(!app_dir.join(UPDATE_STAGING_DIR).exists());
         assert!(!app_dir.join(UPDATE_BACKUP_DIR).exists());
+    }
+
+    #[test]
+    fn update_guard_rejects_concurrent_acquire_and_releases_on_drop() {
+        static TEST_LOCK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+        let guard = UpdateGuard::acquire(&TEST_LOCK).expect("first acquire should succeed");
+        let err = match UpdateGuard::acquire(&TEST_LOCK) {
+            Ok(_) => panic!("second acquire while held must fail"),
+            Err(e) => e,
+        };
+        assert!(err.to_lowercase().contains("in progress"));
+
+        drop(guard);
+
+        let _guard2 = UpdateGuard::acquire(&TEST_LOCK).expect("acquire after drop should succeed");
+    }
+
+    #[test]
+    fn replace_engine_reports_stages_in_order_and_stops_on_invalid_archive() {
+        let tmp = TempDir::new("anon-camoufox-stages");
+        let app_dir = tmp.path().join("camoufox");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        seed_existing_install(&app_dir);
+
+        let bad_zip = tmp.path().join("bad.zip");
+        write_zip(&bad_zip, &[("not-camoufox.txt", b"nope")]);
+        let mut bad_stages = Vec::new();
+        assert!(
+            replace_engine_from_zip(&app_dir, &bad_zip, "v159.0-beta.43", false, |stage| {
+                bad_stages.push(stage)
+            },)
+            .is_err()
+        );
+        assert_eq!(bad_stages, vec![ReplaceStage::Extracting]);
+
+        let good_zip = tmp.path().join("good.zip");
+        write_zip(&good_zip, &[("camoufox.exe", b"new-binary")]);
+        let mut good_stages = Vec::new();
+        replace_engine_from_zip(&app_dir, &good_zip, "v159.0-beta.43", false, |stage| {
+            good_stages.push(stage)
+        })
+        .expect("replace should succeed");
+        assert_eq!(
+            good_stages,
+            vec![
+                ReplaceStage::Extracting,
+                ReplaceStage::Replacing,
+                ReplaceStage::Done,
+            ]
+        );
     }
 }

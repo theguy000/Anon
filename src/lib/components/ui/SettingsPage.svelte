@@ -1,7 +1,18 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { fade, scale } from 'svelte/transition';
-  import { settings, updateSettings, loadSettings, exportAllInstances, importInstances, addToast, camoufoxVersion, updateCamoufox } from '$lib/store';
+  import {
+    settings,
+    updateSettings,
+    loadSettings,
+    exportAllInstances,
+    importInstances,
+    addToast,
+    camoufoxVersion,
+    updateCamoufox,
+    engineUpdating,
+    engineUpdateProgress,
+  } from '$lib/store';
   import type { AppSettings } from '$lib/store';
   import TagManager from './TagManager.svelte';
   import SettingsSection from '$lib/components/instance/SettingsSection.svelte';
@@ -60,17 +71,14 @@
     input.value = '';
   }
 
+  function fmtBytes(b: number): string {
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1024).toFixed(0) + ' KB';
+  }
+
   async function handleUpdateEngine() {
-    try {
-      const outcome = await updateCamoufox();
-      if (outcome.updated) {
-        addToast(`Engine updated to ${outcome.current_version}`, 'success');
-      } else {
-        addToast(`Engine is already up to date (${outcome.current_version})`, 'info');
-      }
-    } catch (e) {
-      addToast(`Engine update failed: ${e}`, 'error');
-    }
+    await updateCamoufox();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -208,10 +216,37 @@
             <div class="about-row about-engine-row">
               <span class="about-label">ENGINE</span>
               <span class="about-value">{$camoufoxVersion}</span>
-              <button class="btn btn-sm engine-update-btn" on:click={handleUpdateEngine}>
-                UPDATE ENGINE
+              <button
+                class="btn btn-sm engine-update-btn"
+                disabled={$engineUpdating}
+                on:click={handleUpdateEngine}
+              >
+                {$engineUpdating ? 'UPDATING...' : 'UPDATE ENGINE'}
               </button>
             </div>
+            {#if $engineUpdateProgress}
+              <div class="engine-progress" aria-live="polite">
+                <div class="engine-progress-row">
+                  <span class="engine-progress-status">{$engineUpdateProgress.status.toUpperCase()}</span>
+                  <span class="engine-progress-pct">
+                    {#if $engineUpdateProgress.downloaded && $engineUpdateProgress.total}
+                      {Math.round(($engineUpdateProgress.downloaded / $engineUpdateProgress.total) * 100)}%
+                    {:else}
+                      {$engineUpdateProgress.progress}%
+                    {/if}
+                  </span>
+                </div>
+                <div class="engine-progress-track">
+                  <div class="engine-progress-fill" style="width: {$engineUpdateProgress.progress}%"></div>
+                </div>
+                {#if $engineUpdateProgress.downloaded !== undefined}
+                  <div class="engine-progress-bytes">
+                    {fmtBytes($engineUpdateProgress.downloaded)}
+                    {#if $engineUpdateProgress.total}&nbsp;of {fmtBytes($engineUpdateProgress.total)}{/if}
+                  </div>
+                {/if}
+              </div>
+            {/if}
           </div>
         </SettingsSection>
         {/if}
@@ -401,5 +436,59 @@
 
   .engine-update-btn {
     margin-left: auto;
+  }
+
+  .engine-update-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .engine-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding-top: 0.4rem;
+  }
+
+  .engine-progress-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .engine-progress-status {
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .engine-progress-pct,
+  .engine-progress-bytes {
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+
+  .engine-progress-pct {
+    color: var(--text-main);
+    flex-shrink: 0;
+  }
+
+  .engine-progress-track {
+    width: 100%;
+    height: 2px;
+    background: var(--panel-border);
+    overflow: hidden;
+  }
+
+  .engine-progress-fill {
+    height: 100%;
+    background: var(--text-main);
+    transition: width 0.2s ease;
   }
 </style>
