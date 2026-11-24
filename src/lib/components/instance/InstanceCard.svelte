@@ -14,6 +14,7 @@
     exportInstance,
     testProxy,
     getSessionInfo,
+    clearSessionData,
     instances,
   } from '$lib/store';
   import type {
@@ -48,6 +49,7 @@
   let editInput: HTMLInputElement;
 
   let showWipeConfirm = false;
+  let showClearSessionConfirm = false;
   let showDeleteConfirm = false;
   let showSettings = false;
   let showSession = false;
@@ -56,6 +58,7 @@
   let proxyTestResult: ProxyTestResult | null = null;
 
   let sessionInfo: SessionInfo | null = null;
+  let sessionError: string | null = null;
   let loadingSession = false;
   let loadedSessionFor = '';
 
@@ -73,7 +76,7 @@
   $: tagDefs = ($settings.tag_definitions ?? []) as TagDefinition[];
   $: instanceTags = (instance.tags ?? []).map((label) => {
     const def = tagDefs.find((t) => t.label === label);
-    return { label, color: def?.color ?? '#737373' };
+    return { label, color: def?.color ?? '#8c8c92' };
   });
 
   $: proxyDisplay = deriveProxyDisplay(instance);
@@ -108,15 +111,22 @@
     }
     if (inst.proxy && inst.proxy.trim()) {
       const raw = inst.proxy.trim();
-      const m = raw.match(/^(socks5|socks4|https?):\/\/(?:[^@]+@)?([^/:]+)(?::(\d+))?/i);
+      const m = raw.match(
+        /^(socks5|socks4|https?):\/\/(?:([^:@/]+)(?::([^@/]*))?@)?([^/:]+)(?::(\d+))?/i
+      );
       if (m) {
-        const proto = m[1].toLowerCase().startsWith('http') ? 'http' : m[1].toLowerCase();
-        const port = m[3] ? Number(m[3]) : null;
+        const rawScheme = m[1].toLowerCase();
+        const proto = rawScheme === 'https' ? 'http' : rawScheme;
+        const username = m[2] ? decodeURIComponent(m[2]) : null;
+        const password = m[3] ? decodeURIComponent(m[3]) : null;
+        const host = m[4];
+        const port = m[5] ? Number(m[5]) : null;
+        const endpoint = port ? `${rawScheme}://${host}:${port}` : `${rawScheme}://${host}`;
         return {
-          host: m[2],
+          host,
           proto,
-          endpoint: raw,
-          testable: port ? { proxy_type: proto, host: m[2], port } : null,
+          endpoint,
+          testable: port ? { proxy_type: proto, host, port, username, password } : null,
         };
       }
       return { host: raw, proto: null, endpoint: raw, testable: null };
@@ -171,20 +181,30 @@
 
   async function loadSessionSummary() {
     loadingSession = true;
+    sessionError = null;
     try {
       sessionInfo = await getSessionInfo(instance.id);
     } catch {
       sessionInfo = null;
+      sessionError = 'Failed to load session size';
     } finally {
       loadingSession = false;
     }
   }
 
-  function handleRowClick() {
+  function handleRowActivate() {
     if (selectable) {
       dispatch('select', instance.id);
     } else {
       dispatch('toggleExpand', instance.id);
+    }
+  }
+
+  function handleRowKeydown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleRowActivate();
     }
   }
 
@@ -207,7 +227,11 @@
       return;
     }
     const allInstances = get(instances);
-    if (allInstances.some((i) => i.id !== instance.id && i.name.toLowerCase() === trimmed.toLowerCase())) {
+    if (
+      allInstances.some(
+        (i) => i.id !== instance.id && i.name.toLowerCase() === trimmed.toLowerCase()
+      )
+    ) {
       editError = 'Name already exists';
       return;
     }
@@ -252,6 +276,16 @@
     }
     togglePersistence(instance.id, false);
     showWipeConfirm = false;
+  }
+
+  async function handleClearSessionAll() {
+    try {
+      await clearSessionData(instance.id, ['all']);
+      showClearSessionConfirm = false;
+      await loadSessionSummary();
+    } catch {
+      // Toasted in store
+    }
   }
 
   async function handleLaunch(url?: string) {
@@ -344,9 +378,10 @@
     class:selectable
     class:running={isRunning}
     class:selected
-    on:click={handleRowClick}
-    on:keydown={(e) => e.key === 'Enter' && handleRowClick()}
-    role="button"
+    on:click={handleRowActivate}
+    on:keydown={handleRowKeydown}
+    role="row"
+    aria-expanded={!selectable ? expanded : undefined}
     tabindex="0"
   >
     {#if selectable}
@@ -366,6 +401,7 @@
           <input
             class="rename-input"
             class:error={!!editError}
+            aria-label="Rename instance"
             bind:value={editName}
             bind:this={editInput}
             on:keydown={handleEditKeydown}
@@ -378,8 +414,6 @@
       {:else}
         <span
           class="name"
-          role="textbox"
-          tabindex="-1"
           on:dblclick|stopPropagation={startEdit}
           title={isRunning ? instance.name : 'Double-click to rename'}
         >
@@ -424,9 +458,13 @@
 
     <div class="col-action" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
       {#if isRunning}
-        <button class="row-btn stop" on:click={handleStop}>Stop</button>
+        <button class="btn btn-stop btn-sm row-action-btn" on:click={handleStop}>Stop</button>
       {:else}
-        <button class="row-btn" disabled={isCurrentlyLaunching} on:click={() => handleLaunch()}>
+        <button
+          class="btn btn-sm row-action-btn"
+          disabled={isCurrentlyLaunching}
+          on:click={() => handleLaunch()}
+        >
           {isCurrentlyLaunching ? 'Launching…' : 'Launch'}
         </button>
       {/if}
@@ -435,13 +473,13 @@
 
   {#if expanded}
     <div class="drawer">
-      <div class="dcol">
-        <div class="dlbl">PROXY</div>
+      <div class="drawer-col">
+        <div class="drawer-label">Proxy</div>
         {#if proxyDisplay.endpoint}
-          <div class="dval mono" title={proxyDisplay.endpoint}>{proxyDisplay.endpoint}</div>
+          <div class="drawer-value mono" title={proxyDisplay.endpoint}>{proxyDisplay.endpoint}</div>
           {#if proxyTestResult}
             {#if proxyTestResult.success}
-              <div class="dsub mono ok">
+              <div class="drawer-sub mono ok">
                 {proxyTestResult.ip ?? 'Connected'}
                 {#if proxyTestResult.city || proxyTestResult.country}
                   · {[proxyTestResult.city, proxyTestResult.country].filter(Boolean).join(', ')}
@@ -451,10 +489,10 @@
                 {/if}
               </div>
             {:else}
-              <div class="dsub err">{proxyTestResult.error ?? 'Proxy test failed'}</div>
+              <div class="drawer-sub err">{proxyTestResult.error ?? 'Proxy test failed'}</div>
             {/if}
           {/if}
-          <div class="dactions">
+          <div class="drawer-actions">
             {#if proxyDisplay.testable}
               <button class="ghost-btn" disabled={testingProxy} on:click={handleTestProxy}>
                 {testingProxy ? 'Testing…' : 'Test proxy'}
@@ -463,24 +501,25 @@
             <button class="link-btn" on:click={() => (showSettings = true)}>Configure</button>
           </div>
         {:else}
-          <div class="dval muted">Direct connection</div>
-          <div class="dactions">
+          <div class="drawer-value muted">Direct connection</div>
+          <div class="drawer-actions">
             <button class="link-btn" on:click={() => (showSettings = true)}>Add proxy</button>
           </div>
         {/if}
       </div>
 
-      <div class="dcol">
-        <div class="dlbl">FINGERPRINT</div>
-        <div class="dval">{fpSummary.detail}</div>
+      <div class="drawer-col">
+        <div class="drawer-label">Fingerprint</div>
+        <div class="drawer-value">{fpSummary.detail}</div>
         {#if fpSummary.sub}
-          <div class="dsub mono">{fpSummary.sub}</div>
+          <div class="drawer-sub mono">{fpSummary.sub}</div>
         {/if}
-        <div class="dactions">
+        <div class="drawer-actions">
           {#each FP_TEST_SITES as site}
             <button
               class="link-btn"
-              disabled={isCurrentlyLaunching}
+              disabled={isRunning || isCurrentlyLaunching}
+              title={isRunning ? 'Stop instance to launch a test site' : `Launch ${site.label}`}
               on:click={() => handleLaunch(site.url)}
             >
               {site.label}
@@ -490,35 +529,46 @@
         </div>
       </div>
 
-      <div class="dcol">
-        <div class="dlbl">SESSION & NOTES</div>
+      <div class="drawer-col">
+        <div class="drawer-label">Session & notes</div>
         <textarea
           class="notes-input"
+          aria-label={`Notes for ${instance.name}`}
           rows="2"
           bind:value={notesDraft}
           on:blur={handleSaveNotes}
           placeholder="Add a note..."
         ></textarea>
-        <div class="dactions between">
-          <span class="dsub mono">
+        <div class="drawer-actions between">
+          <span class="drawer-sub mono" class:err={!!sessionError}>
             {#if loadingSession}
               Loading…
+            {:else if sessionError}
+              {sessionError}
             {:else if sessionInfo}
               {formatBytes(sessionInfo.profile_size_bytes)} · {formatDate(instance.created_at)}
             {:else}
               Created {formatDate(instance.created_at)}
             {/if}
           </span>
-          <div class="dactions">
+          <div class="drawer-actions">
             {#if notesDraft !== (instance.notes ?? '')}
               <button class="link-btn ok" disabled={savingNotes} on:click={handleSaveNotes}>
                 Save note
               </button>
             {/if}
+            <button class="link-btn" disabled={isRunning} on:click={startEdit}>Rename</button>
             <button class="link-btn" on:click={handleTogglePersist}>
               {instance.persist_data ? 'Switch to wipe' : 'Retain data'}
             </button>
-            <button class="link-btn" on:click={() => (showSession = true)}>Session</button>
+            <button
+              class="link-btn"
+              disabled={isRunning}
+              on:click={() => (showClearSessionConfirm = true)}
+            >
+              Clear
+            </button>
+            <button class="link-btn" on:click={() => (showSession = true)}>Inspect</button>
             <button class="link-btn" on:click={handleExport}>Export</button>
             <button class="link-btn danger" disabled={isRunning} on:click={handleDelete}>
               Delete
@@ -553,6 +603,16 @@
 />
 
 <ConfirmationModal
+  show={showClearSessionConfirm}
+  title="Clear session data"
+  message={`Clear all cookies, storage, cache, and history for "${instance.name}"?`}
+  confirmText="Clear session"
+  danger={true}
+  on:confirm={handleClearSessionAll}
+  on:cancel={() => (showClearSessionConfirm = false)}
+/>
+
+<ConfirmationModal
   show={showDeleteConfirm}
   title="Delete instance"
   message={`Permanently delete "${instance.name}" and its local browser profile?`}
@@ -565,7 +625,7 @@
 
 <style>
   .row-group {
-    border-bottom: 1px solid #151518;
+    border-bottom: 1px solid var(--hairline);
   }
 
   .profile-row {
@@ -589,16 +649,16 @@
   }
 
   .profile-row.running {
-    border-left-color: #ffffff;
-    background: #060607;
+    border-left-color: var(--text-main);
+    background: var(--surface-recessed);
   }
 
   .profile-row.running:hover {
-    background: #0c0c0e;
+    background: var(--surface-raised);
   }
 
   .profile-row.selected {
-    background: #0d0d10;
+    background: var(--surface-raised);
   }
 
   .col-chk {
@@ -616,7 +676,7 @@
   .name {
     font-size: 13.5px;
     font-weight: 500;
-    color: #ffffff;
+    color: var(--text-main);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -630,10 +690,10 @@
   }
 
   .rename-input {
-    background: #000000;
-    border: 1px solid #ffffff;
+    background: var(--bg-color);
+    border: 1px solid var(--border-active);
     border-radius: var(--radius);
-    color: #ffffff;
+    color: var(--text-main);
     font-family: inherit;
     font-size: 13px;
     padding: 2px 6px;
@@ -660,7 +720,7 @@
     align-items: center;
     gap: 4px;
     font-size: 11.5px;
-    color: #737373;
+    color: var(--text-muted);
   }
 
   .tag-item i {
@@ -709,7 +769,7 @@
   }
 
   .muted {
-    color: #737373;
+    color: var(--text-muted);
   }
 
   .ok {
@@ -725,45 +785,16 @@
     justify-content: flex-end;
   }
 
-  .row-btn {
-    height: 27px;
+  .row-action-btn {
     min-width: 68px;
+    height: 27px;
     padding: 0 11px;
-    border-radius: var(--radius);
-    background: transparent;
-    border: 1px solid #2d2d32;
-    color: var(--text-main);
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.1s;
   }
 
-  .row-btn:hover:not(:disabled) {
-    background: #ffffff;
-    border-color: #ffffff;
-    color: #000000;
-  }
-
-  .row-btn.stop {
-    border-color: #a16b25;
-    color: var(--accent-warning);
-  }
-
-  .row-btn.stop:hover:not(:disabled) {
-    background: var(--accent-warning);
-    border-color: var(--accent-warning);
-    color: #000000;
-  }
-
-  .row-btn:active:not(:disabled) {
-    transform: scale(0.97);
-  }
-
-  .row-btn:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
+  .row-action-btn:not(.btn-stop):hover:not(:disabled) {
+    background: var(--text-main);
+    border-color: var(--text-main);
+    color: var(--text-inverse);
   }
 
   .drawer {
@@ -772,36 +803,36 @@
     gap: 24px;
     padding: 15px 20px 17px 18px;
     background: var(--surface-recessed);
-    border-top: 1px solid #161619;
+    border-top: 1px solid var(--hairline);
   }
 
-  .dcol {
+  .drawer-col {
     display: flex;
     flex-direction: column;
     gap: 6px;
     min-width: 0;
   }
 
-  .dlbl {
-    font-size: 10px;
-    letter-spacing: 0.08em;
+  .drawer-label {
+    font-size: 11px;
+    font-weight: 500;
     color: var(--text-dim);
   }
 
-  .dval {
+  .drawer-value {
     font-size: 12.5px;
-    color: #e4e4e7;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .dsub {
+  .drawer-sub {
     font-size: 11.5px;
-    color: #737373;
+    color: var(--text-muted);
   }
 
-  .dactions {
+  .drawer-actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -809,7 +840,7 @@
     margin-top: 2px;
   }
 
-  .dactions.between {
+  .drawer-actions.between {
     justify-content: space-between;
   }
 
@@ -818,7 +849,7 @@
     padding: 0 10px;
     border-radius: var(--radius);
     background: transparent;
-    border: 1px solid #2b2b30;
+    border: 1px solid var(--panel-border);
     color: var(--text-secondary);
     font-family: inherit;
     font-size: 11.5px;
@@ -827,8 +858,8 @@
   }
 
   .ghost-btn:hover:not(:disabled) {
-    border-color: #ffffff;
-    color: #ffffff;
+    border-color: var(--text-main);
+    color: var(--text-main);
   }
 
   .ghost-btn:disabled {
@@ -839,7 +870,7 @@
   .link-btn {
     background: none;
     border: none;
-    color: #9b9ba1;
+    color: var(--text-muted);
     font-family: inherit;
     font-size: 12px;
     cursor: pointer;
@@ -847,7 +878,7 @@
   }
 
   .link-btn:hover:not(:disabled) {
-    color: #ffffff;
+    color: var(--text-main);
     text-decoration: underline;
     text-underline-offset: 3px;
   }
@@ -868,8 +899,8 @@
 
   .notes-input {
     width: 100%;
-    background: #000000;
-    border: 1px solid #202024;
+    background: var(--bg-color);
+    border: 1px solid var(--panel-border);
     border-radius: var(--radius);
     color: var(--text-main);
     font-size: 12px;
@@ -880,6 +911,6 @@
   }
 
   .notes-input:focus {
-    border-color: #66666e;
+    border-color: var(--border-hover);
   }
 </style>

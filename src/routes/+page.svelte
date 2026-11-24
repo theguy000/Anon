@@ -396,20 +396,20 @@
         <div class="thead" class:selectable={selectMode}>
           {#if selectMode}<span></span>{/if}
           <button class="sort-head" on:click={() => toggleSort('name')}>
-            NAME
+            Name
             {#if sortField === 'name'}
               <span class="sort-mark">{sortDir === 'asc' ? '↑' : '↓'}</span>
             {/if}
           </button>
-          <span>PROXY</span>
-          <span>FINGERPRINT</span>
+          <span>Proxy</span>
+          <span>Fingerprint</span>
           <button class="sort-head" on:click={() => toggleSort('created_at')}>
-            DATA
+            Data
             {#if sortField === 'created_at'}
               <span class="sort-mark">{sortDir === 'asc' ? '↑' : '↓'}</span>
             {/if}
           </button>
-          <span class="right">ACTION</span>
+          <span class="right">Action</span>
         </div>
 
         <div class="tbody">
@@ -919,10 +919,10 @@
     gap: 16px;
     padding: 0 12px;
     height: 34px;
-    font-size: 10px;
-    letter-spacing: 0.08em;
+    font-size: 11px;
+    font-weight: 500;
     color: var(--text-dim);
-    border-bottom: 1px solid #1c1c1f;
+    border-bottom: 1px solid var(--hairline-strong);
   }
 
   .thead.selectable {
