@@ -77,9 +77,7 @@
     return (b / 1024).toFixed(0) + ' KB';
   }
 
-  async function handleUpdateEngine() {
-    await updateCamoufox();
-  }
+
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') handleClose();
@@ -219,7 +217,7 @@
               <button
                 class="btn btn-sm engine-update-btn"
                 disabled={$engineUpdating}
-                on:click={handleUpdateEngine}
+                on:click={updateCamoufox}
               >
                 {$engineUpdating ? 'UPDATING...' : 'UPDATE ENGINE'}
               </button>
@@ -228,13 +226,7 @@
               <div class="engine-progress" aria-live="polite">
                 <div class="engine-progress-row">
                   <span class="engine-progress-status">{$engineUpdateProgress.status.toUpperCase()}</span>
-                  <span class="engine-progress-pct">
-                    {#if $engineUpdateProgress.downloaded && $engineUpdateProgress.total}
-                      {Math.round(($engineUpdateProgress.downloaded / $engineUpdateProgress.total) * 100)}%
-                    {:else}
-                      {$engineUpdateProgress.progress}%
-                    {/if}
-                  </span>
+                  <span class="engine-progress-pct">{$engineUpdateProgress.progress}%</span>
                 </div>
                 <div class="engine-progress-track">
                   <div class="engine-progress-fill" style="width: {$engineUpdateProgress.progress}%"></div>

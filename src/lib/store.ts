@@ -246,8 +246,8 @@ export interface InstallStatus {
 }
 
 export const installProgress = writable<InstallStatus | null>(null);
-export const engineUpdating = writable<boolean>(false);
 export const engineUpdateProgress = writable<InstallStatus | null>(null);
+export const engineUpdating = derived(engineUpdateProgress, ($progress) => $progress !== null);
 export const instances = writable<InstanceConfig[]>([]);
 export const fingerprintPresets = writable<Record<string, Preset[]>>({});
 export const isLaunching = writable<string | null>(null);
@@ -435,13 +435,13 @@ export interface EngineUpdateOutcome {
 export async function updateCamoufox(): Promise<EngineUpdateOutcome | null> {
   if (get(engineUpdating)) return null;
 
-  engineUpdating.set(true);
   engineUpdateProgress.set({ status: 'Checking latest release...', progress: 0 });
-  const unlisten = await listen<InstallStatus>('install_progress', (event) => {
-    engineUpdateProgress.set(event.payload);
-  });
+  let unlisten: (() => void) | null = null;
 
   try {
+    unlisten = await listen<InstallStatus>('install_progress', (event) => {
+      engineUpdateProgress.set(event.payload);
+    });
     const outcome = await invoke<EngineUpdateOutcome>('update_camoufox');
     if (outcome.updated) {
       camoufoxVersion.set(outcome.current_version);
@@ -455,8 +455,7 @@ export async function updateCamoufox(): Promise<EngineUpdateOutcome | null> {
     addToast(`Engine update failed: ${e}`, 'error');
     return null;
   } finally {
-    unlisten();
-    engineUpdating.set(false);
+    unlisten?.();
     engineUpdateProgress.set(null);
   }
 }

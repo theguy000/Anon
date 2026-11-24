@@ -74,11 +74,17 @@ pub async fn get_camoufox_version(app: &AppHandle) -> String {
     "Camoufox".to_string()
 }
 
+struct DownloadedArchive {
+    file_name: String,
+    downloaded: u64,
+    total: Option<u64>,
+}
+
 async fn download_release_zip(
     app: &AppHandle,
     release_info: &ReleaseInfo,
     zip_path: &Path,
-) -> Result<(String, u64, Option<u64>), String> {
+) -> Result<DownloadedArchive, String> {
     let file_name = release_info
         .download_url
         .rsplit('/')
@@ -136,11 +142,11 @@ async fn download_release_zip(
         }
     }
 
-    Ok((
+    Ok(DownloadedArchive {
         file_name,
         downloaded,
-        (total_size > 0).then_some(total_size),
-    ))
+        total: (total_size > 0).then_some(total_size),
+    })
 }
 
 pub async fn download_and_extract(app: &AppHandle) -> Result<(), String> {
@@ -152,16 +158,15 @@ pub async fn download_and_extract(app: &AppHandle) -> Result<(), String> {
     let release_info = get_latest_release_info().await.map_err(|e| e.to_string())?;
     let zip_path = app_dir.join("camoufox.zip");
 
-    let (file_name, downloaded, total) =
-        download_release_zip(app, &release_info, &zip_path).await?;
+    let archive_info = download_release_zip(app, &release_info, &zip_path).await?;
 
     let _ = app.emit(
         "install_progress",
         InstallStatus {
-            status: format!("Extracting {}...", file_name),
+            status: format!("Extracting {}...", archive_info.file_name),
             progress: 95,
-            downloaded: Some(downloaded),
-            total,
+            downloaded: Some(archive_info.downloaded),
+            total: archive_info.total,
         },
     );
 
@@ -183,6 +188,12 @@ pub async fn download_and_extract(app: &AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+const RUNNING_INSTANCES_ERR: &str =
+    "Stop all running browser instances before updating the engine.";
+const UPDATE_STAGING_DIR: &str = ".camoufox-update-staging";
+const UPDATE_BACKUP_DIR: &str = ".camoufox-old-backup";
+const PRESERVED_USER_ENTRIES: &[&str] = &["profiles", "settings.json", "geo_cache.json"];
 
 static ENGINE_UPDATE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -209,11 +220,50 @@ pub(crate) enum ReplaceStage {
     Done,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct UpdateOutcome {
+    pub updated: bool,
+    pub previous_version: String,
+    pub current_version: String,
+}
+
+fn prepare_stale_update_dirs(app_dir: &Path, zip_in_staging: bool) -> Result<(), String> {
+    let staging_dir = app_dir.join(UPDATE_STAGING_DIR);
+    let backup_dir = app_dir.join(UPDATE_BACKUP_DIR);
+    let has_valid_binary = app_dir.join("camoufox.exe").is_file();
+
+    if backup_dir.exists() {
+        if has_valid_binary {
+            std::fs::remove_dir_all(&backup_dir)
+                .map_err(|e| format!("Failed to clean stale backup directory: {}", e))?;
+        } else {
+            return Err(
+                "Found backup from an interrupted update while camoufox.exe is missing. Restore or remove .camoufox-old-backup before retrying."
+                    .to_string(),
+            );
+        }
+    }
+
+    if !zip_in_staging && staging_dir.exists() {
+        if has_valid_binary {
+            std::fs::remove_dir_all(&staging_dir)
+                .map_err(|e| format!("Failed to clean stale staging directory: {}", e))?;
+        } else {
+            return Err(
+                "Found staging files from an interrupted update while camoufox.exe is missing. Remove .camoufox-update-staging before retrying."
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
     let _guard = UpdateGuard::acquire(&ENGINE_UPDATE_IN_FLIGHT)?;
 
     if crate::process_manager::has_running_instances() {
-        return Err("Stop all running browser instances before updating the engine.".to_string());
+        return Err(RUNNING_INSTANCES_ERR.to_string());
     }
 
     let _ = app.emit(
@@ -239,15 +289,19 @@ pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
         });
     }
 
-    let zip_path = app_dir.join("camoufox.update.zip");
-    let (file_name, downloaded, total) =
-        match download_release_zip(app, &release_info, &zip_path).await {
-            Ok(info) => info,
-            Err(err) => {
-                let _ = std::fs::remove_file(&zip_path);
-                return Err(err);
-            }
-        };
+    prepare_stale_update_dirs(&app_dir, false)?;
+    let staging_dir = app_dir.join(UPDATE_STAGING_DIR);
+    std::fs::create_dir_all(&staging_dir)
+        .map_err(|e| format!("Failed to create staging directory: {}", e))?;
+
+    let zip_path = staging_dir.join("camoufox.update.zip");
+    let archive_info = match download_release_zip(app, &release_info, &zip_path).await {
+        Ok(info) => info,
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&staging_dir);
+            return Err(err);
+        }
+    };
 
     let swap_result = replace_engine_from_zip(
         &app_dir,
@@ -257,16 +311,16 @@ pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
         |stage| {
             let status = match stage {
                 ReplaceStage::Extracting => InstallStatus {
-                    status: format!("Extracting {}...", file_name),
+                    status: format!("Extracting {}...", archive_info.file_name),
                     progress: 92,
-                    downloaded: Some(downloaded),
-                    total,
+                    downloaded: Some(archive_info.downloaded),
+                    total: archive_info.total,
                 },
                 ReplaceStage::Replacing => InstallStatus {
                     status: "Replacing old engine...".to_string(),
                     progress: 96,
-                    downloaded: Some(downloaded),
-                    total,
+                    downloaded: Some(archive_info.downloaded),
+                    total: archive_info.total,
                 },
                 ReplaceStage::Done => InstallStatus {
                     status: "Done!".to_string(),
@@ -277,7 +331,9 @@ pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
             let _ = app.emit("install_progress", status);
         },
     );
-    let _ = std::fs::remove_file(&zip_path);
+    if staging_dir.exists() {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+    }
     swap_result?;
 
     Ok(UpdateOutcome {
@@ -285,17 +341,6 @@ pub async fn update_camoufox(app: &AppHandle) -> Result<UpdateOutcome, String> {
         previous_version,
         current_version: release_info.version,
     })
-}
-
-const UPDATE_STAGING_DIR: &str = ".camoufox-update-staging";
-const UPDATE_BACKUP_DIR: &str = ".camoufox-old-backup";
-const PRESERVED_USER_ENTRIES: &[&str] = &["profiles", "settings.json", "geo_cache.json"];
-
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct UpdateOutcome {
-    pub updated: bool,
-    pub previous_version: String,
-    pub current_version: String,
 }
 
 fn is_preserved_entry(name: &std::ffi::OsStr) -> bool {
@@ -309,26 +354,58 @@ fn is_preserved_entry(name: &std::ffi::OsStr) -> bool {
             .any(|preserved| s.eq_ignore_ascii_case(preserved))
 }
 
-fn remove_path(path: &Path) {
+fn remove_path(path: &Path) -> Result<(), String> {
     if path.is_dir() {
-        let _ = std::fs::remove_dir_all(path);
+        std::fs::remove_dir_all(path).map_err(|e| format!("remove dir '{}': {}", path.display(), e))
     } else if path.exists() {
-        let _ = std::fs::remove_file(path);
+        std::fs::remove_file(path).map_err(|e| format!("remove file '{}': {}", path.display(), e))
+    } else {
+        Ok(())
     }
 }
 
-fn rollback_swap(app_dir: &Path, backup_dir: &Path, installed_entries: &[std::ffi::OsString]) {
+fn rollback_swap(
+    app_dir: &Path,
+    backup_dir: &Path,
+    installed_entries: &[std::ffi::OsString],
+) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
     for name in installed_entries {
-        remove_path(&app_dir.join(name));
+        if let Err(e) = remove_path(&app_dir.join(name)) {
+            errors.push(e);
+        }
     }
 
-    if let Ok(entries) = std::fs::read_dir(backup_dir) {
-        for entry in entries.flatten() {
-            let dest = app_dir.join(entry.file_name());
-            // Windows fs::rename fails if destination exists (e.g. partial version.txt).
-            remove_path(&dest);
-            let _ = std::fs::rename(entry.path(), dest);
+    match std::fs::read_dir(backup_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(entry) => {
+                        let dest = app_dir.join(entry.file_name());
+                        // Windows fs::rename fails if destination exists (e.g. partial version.txt).
+                        if let Err(e) = remove_path(&dest) {
+                            errors.push(e);
+                            continue;
+                        }
+                        if let Err(e) = std::fs::rename(entry.path(), &dest) {
+                            errors.push(format!(
+                                "restore '{}': {}",
+                                entry.file_name().to_string_lossy(),
+                                e
+                            ));
+                        }
+                    }
+                    Err(e) => errors.push(format!("inspect backup entry: {}", e)),
+                }
+            }
         }
+        Err(e) => errors.push(format!("read backup directory: {}", e)),
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 
@@ -340,22 +417,21 @@ pub(crate) fn replace_engine_from_zip(
     mut on_stage: impl FnMut(ReplaceStage),
 ) -> Result<(), String> {
     if has_running_instances {
-        return Err("Stop all running browser instances before updating the engine.".to_string());
+        return Err(RUNNING_INSTANCES_ERR.to_string());
     }
 
     let staging_dir = app_dir.join(UPDATE_STAGING_DIR);
     let backup_dir = app_dir.join(UPDATE_BACKUP_DIR);
+    let zip_in_staging = zip_path.parent() == Some(staging_dir.as_path());
 
-    if staging_dir.exists() {
-        std::fs::remove_dir_all(&staging_dir)
-            .map_err(|e| format!("Failed to clean stale staging directory: {}", e))?;
-    }
-    if backup_dir.exists() && app_dir.join("camoufox.exe").exists() {
-        std::fs::remove_dir_all(&backup_dir)
-            .map_err(|e| format!("Failed to clean stale backup directory: {}", e))?;
-    }
+    prepare_stale_update_dirs(app_dir, zip_in_staging)?;
 
-    std::fs::create_dir_all(&staging_dir)
+    let extract_dir = staging_dir.join("extracted");
+    if extract_dir.exists() {
+        std::fs::remove_dir_all(&extract_dir)
+            .map_err(|e| format!("Failed to clean extract directory: {}", e))?;
+    }
+    std::fs::create_dir_all(&extract_dir)
         .map_err(|e| format!("Failed to create staging directory: {}", e))?;
 
     on_stage(ReplaceStage::Extracting);
@@ -364,9 +440,9 @@ pub(crate) fn replace_engine_from_zip(
         let mut archive =
             zip::ZipArchive::new(file).map_err(|e| format!("Failed to read archive: {}", e))?;
         archive
-            .extract(&staging_dir)
+            .extract(&extract_dir)
             .map_err(|e| format!("Failed to extract archive: {}", e))?;
-        if !staging_dir.join("camoufox.exe").is_file() {
+        if !extract_dir.join("camoufox.exe").is_file() {
             return Err("Downloaded archive does not contain camoufox.exe".to_string());
         }
         Ok(())
@@ -383,10 +459,6 @@ pub(crate) fn replace_engine_from_zip(
         return Err(format!("Failed to create backup directory: {}", e));
     }
 
-    let zip_name_in_app_dir = (zip_path.parent() == Some(app_dir))
-        .then(|| zip_path.file_name())
-        .flatten();
-
     let mut installed_entries = Vec::new();
     let swap_result = (|| -> Result<(), String> {
         let entries = std::fs::read_dir(app_dir)
@@ -394,7 +466,7 @@ pub(crate) fn replace_engine_from_zip(
         for entry in entries {
             let entry = entry.map_err(|e| format!("Failed to inspect engine directory: {}", e))?;
             let name = entry.file_name();
-            if is_preserved_entry(&name) || zip_name_in_app_dir == Some(name.as_os_str()) {
+            if is_preserved_entry(&name) {
                 continue;
             }
             std::fs::rename(entry.path(), backup_dir.join(&name)).map_err(|e| {
@@ -406,7 +478,7 @@ pub(crate) fn replace_engine_from_zip(
             })?;
         }
 
-        let staged_entries = std::fs::read_dir(&staging_dir)
+        let staged_entries = std::fs::read_dir(&extract_dir)
             .map_err(|e| format!("Failed to read staged engine files: {}", e))?;
         for entry in staged_entries {
             let entry =
@@ -431,10 +503,20 @@ pub(crate) fn replace_engine_from_zip(
     })();
 
     if let Err(err) = swap_result {
-        rollback_swap(app_dir, &backup_dir, &installed_entries);
+        let rollback_res = rollback_swap(app_dir, &backup_dir, &installed_entries);
         let _ = std::fs::remove_dir_all(&staging_dir);
-        let _ = std::fs::remove_dir_all(&backup_dir);
-        return Err(err);
+        return match rollback_res {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(&backup_dir);
+                Err(err)
+            }
+            Err(rollback_errors) => Err(format!(
+                "{} (rollback incomplete; previous files kept in {}: {})",
+                err,
+                UPDATE_BACKUP_DIR,
+                rollback_errors.join("; ")
+            )),
+        };
     }
 
     std::fs::remove_dir_all(&backup_dir).map_err(|e| {
@@ -675,7 +757,9 @@ mod tests {
         std::fs::create_dir_all(&app_dir).unwrap();
         seed_existing_install(&app_dir);
 
-        let zip_path = app_dir.join("camoufox.update.zip");
+        let staging_dir = app_dir.join(UPDATE_STAGING_DIR);
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        let zip_path = staging_dir.join("camoufox.update.zip");
         write_zip(
             &zip_path,
             &[
@@ -872,5 +956,81 @@ mod tests {
                 ReplaceStage::Done,
             ]
         );
+    }
+
+    #[test]
+    fn replace_engine_cleans_stale_dirs_when_binary_is_present() {
+        let tmp = TempDir::new("anon-camoufox-stale-ok");
+        let app_dir = tmp.path().join("camoufox");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        seed_existing_install(&app_dir);
+
+        std::fs::create_dir_all(app_dir.join(UPDATE_STAGING_DIR)).unwrap();
+        std::fs::write(app_dir.join(UPDATE_STAGING_DIR).join("stale.tmp"), b"x").unwrap();
+        std::fs::create_dir_all(app_dir.join(UPDATE_BACKUP_DIR)).unwrap();
+        std::fs::write(app_dir.join(UPDATE_BACKUP_DIR).join("old.tmp"), b"y").unwrap();
+
+        let zip_path = tmp.path().join("new.zip");
+        write_zip(&zip_path, &[("camoufox.exe", b"new-binary")]);
+
+        replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false, |_| {})
+            .expect("stale dirs should be cleaned when camoufox.exe is present");
+        assert_eq!(
+            std::fs::read(app_dir.join("camoufox.exe")).unwrap(),
+            b"new-binary"
+        );
+        assert!(!app_dir.join(UPDATE_STAGING_DIR).exists());
+        assert!(!app_dir.join(UPDATE_BACKUP_DIR).exists());
+    }
+
+    #[test]
+    fn replace_engine_preserves_backup_and_aborts_when_binary_is_missing() {
+        let tmp = TempDir::new("anon-camoufox-stale-missing-bin");
+        let app_dir = tmp.path().join("camoufox");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::create_dir_all(app_dir.join(UPDATE_BACKUP_DIR)).unwrap();
+        std::fs::write(
+            app_dir.join(UPDATE_BACKUP_DIR).join("camoufox.exe"),
+            b"rescued-binary",
+        )
+        .unwrap();
+
+        let zip_path = tmp.path().join("new.zip");
+        write_zip(&zip_path, &[("camoufox.exe", b"new-binary")]);
+
+        let err = replace_engine_from_zip(&app_dir, &zip_path, "v159.0-beta.43", false, |_| {})
+            .expect_err("must not delete backup when camoufox.exe is missing");
+        assert!(err.contains(UPDATE_BACKUP_DIR));
+        assert_eq!(
+            std::fs::read(app_dir.join(UPDATE_BACKUP_DIR).join("camoufox.exe")).unwrap(),
+            b"rescued-binary"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rollback_swap_returns_errors_when_restore_target_is_locked() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let tmp = TempDir::new("anon-camoufox-rollback-err");
+        let app_dir = tmp.path().join("camoufox");
+        let backup_dir = app_dir.join(UPDATE_BACKUP_DIR);
+        std::fs::create_dir_all(&backup_dir).unwrap();
+        std::fs::write(backup_dir.join("camoufox.exe"), b"backup-bin").unwrap();
+        std::fs::write(app_dir.join("camoufox.exe"), b"locked-dest").unwrap();
+
+        let locked_dest = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(app_dir.join("camoufox.exe"))
+            .unwrap();
+
+        let errs = rollback_swap(&app_dir, &backup_dir, &[])
+            .expect_err("locked destination should report rollback error");
+        assert!(!errs.is_empty());
+        assert!(backup_dir.join("camoufox.exe").is_file());
+
+        drop(locked_dest);
     }
 }
