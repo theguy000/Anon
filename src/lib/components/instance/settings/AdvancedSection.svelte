@@ -5,29 +5,50 @@
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
+
+  $: activeCount = [
+    fp.showcursor,
+    fp.allow_main_world,
+    fp.disable_world_isolation,
+    fp.allow_addon_new_tab,
+    fp.force_scope_access,
+    fp.instant_animations,
+    fp.debug,
+  ].filter(Boolean).length;
 </script>
 
-<SettingsSection title="Advanced" bind:open>
+<SettingsSection
+  title="Developer options"
+  hint={activeCount > 0 ? `${activeCount} active` : "7 options"}
+  bind:open
+>
   <div class="toggle-item">
-    <div class="label-group">
-      <label for="fp-allow-main-world">Allow main world</label>
-      <span class="field-hint">Allow mw: prefix for main-world evaluation</span>
-    </div>
+    <label for="fp-show-cursor">Show cursor overlay</label>
+    <label class="switch">
+      <input
+        id="fp-show-cursor"
+        type="checkbox"
+        checked={fp.showcursor ?? false}
+        on:change={(e) => (fp = setBool(fp, "showcursor", (e.target as HTMLInputElement).checked))}
+      />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-item">
+    <label for="fp-allow-main-world">Allow main-world scripts</label>
     <label class="switch">
       <input
         id="fp-allow-main-world"
         type="checkbox"
         checked={fp.allow_main_world ?? false}
-        on:change={(e) => (fp = setBool(fp, "allow_main_world", (e.target as HTMLInputElement).checked))}
+        on:change={(e) =>
+          (fp = setBool(fp, "allow_main_world", (e.target as HTMLInputElement).checked))}
       />
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-disable-world-isolation">Disable world isolation</label>
-      <span class="field-hint">Run content scripts without isolated world separation</span>
-    </div>
+  <div class="toggle-item">
+    <label for="fp-disable-world-isolation">Disable script isolation</label>
     <label class="switch">
       <input
         id="fp-disable-world-isolation"
@@ -39,11 +60,8 @@
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-allow-addon-newtab">Allow addon new tab</label>
-      <span class="field-hint">Permit extensions to open tabs on launch</span>
-    </div>
+  <div class="toggle-item">
+    <label for="fp-allow-addon-newtab">Allow extension tabs on launch</label>
     <label class="switch">
       <input
         id="fp-allow-addon-newtab"
@@ -55,11 +73,8 @@
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-force-scope-access">Force scope access</label>
-      <span class="field-hint">Grant content scripts access to page scope</span>
-    </div>
+  <div class="toggle-item">
+    <label for="fp-force-scope-access">Allow page-scope access</label>
     <label class="switch">
       <input
         id="fp-force-scope-access"
@@ -71,11 +86,8 @@
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-instant-animations">Instant animations</label>
-      <span class="field-hint">Complete CSS/DOM transitions immediately</span>
-    </div>
+  <div class="toggle-item">
+    <label for="fp-instant-animations">Instant animations</label>
     <label class="switch">
       <input
         id="fp-instant-animations"
@@ -87,11 +99,8 @@
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-debug">Camoufox debug output</label>
-      <span class="field-hint">Emit Camoufox config diagnostics to stderr</span>
-    </div>
+  <div class="toggle-item">
+    <label for="fp-debug">Debug logs</label>
     <label class="switch">
       <input
         id="fp-debug"

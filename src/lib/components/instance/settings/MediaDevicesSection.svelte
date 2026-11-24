@@ -6,13 +6,18 @@
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
+
+  $: setCount = [
+    fp.media_micros,
+    fp.media_webcams,
+    fp.media_speakers,
+    fp.media_spoof_codecs,
+  ].filter((v) => v != null && v !== false).length;
 </script>
 
 <SettingsSection
-  title="Media devices & codecs"
-  hint="{[fp.media_micros, fp.media_webcams, fp.media_speakers, fp.media_spoof_codecs].filter(
-    (v) => v != null,
-  ).length} set"
+  title="Media devices"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
   <div class="field-row">
@@ -54,16 +59,17 @@
     </div>
   </div>
   <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-spoof-codecs">Spoof media codecs</label>
-      <span class="field-hint">Align reported H.264/HEVC/AV1 codec support with claimed OS</span>
+    <div class="setting-title-row">
+      <label for="fp-spoof-codecs">Match OS media codecs</label>
+      <button type="button" class="tip" aria-label="Align reported video codecs with the chosen operating system." data-tip="Align reported video codecs with the chosen operating system.">?</button>
     </div>
     <label class="switch">
       <input
         id="fp-spoof-codecs"
         type="checkbox"
         checked={fp.media_spoof_codecs ?? false}
-        on:change={(e) => (fp = setBool(fp, "media_spoof_codecs", (e.target as HTMLInputElement).checked))}
+        on:change={(e) =>
+          (fp = setBool(fp, "media_spoof_codecs", (e.target as HTMLInputElement).checked))}
       />
       <span class="slider"></span>
     </label>

@@ -6,48 +6,50 @@
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
+
+  $: setCount = [
+    fp.audio_sample_rate,
+    fp.audio_output_latency,
+    fp.audio_max_channel_count,
+  ].filter((v) => v != null).length;
 </script>
 
-<SettingsSection title="AUDIO CONTEXT"
-  hint="{[fp.audio_sample_rate, fp.audio_max_channel_count].filter(
-    (v) => v != null,
-  ).length} SET"
-  bind:open
->
+<SettingsSection title="Audio" hint={setCount > 0 ? `${setCount} set` : "Auto"} bind:open>
   <div class="field-row">
-    <div class="field third" data-tooltip="The sample rate in samples per second.">
-      <label for="fp-sample-rate">SAMPLE RATE</label>
-      <select id="fp-sample-rate"
+    <div class="field third">
+      <label for="fp-sample-rate">Sample rate</label>
+      <select
+        id="fp-sample-rate"
         value={fp.audio_sample_rate ?? ""}
-        on:change={(e) => fp = setSelectNum(fp, "audio_sample_rate", e)}
+        on:change={(e) => (fp = setSelectNum(fp, "audio_sample_rate", e))}
         class="input-field"
       >
-        <option value="">AUTO (48000)</option>
-        {#each SAMPLE_RATES as r}<option value={r}
-            >{r.toLocaleString()} HZ</option
-          >{/each}
+        <option value="">Auto (48 kHz)</option>
+        {#each SAMPLE_RATES as r}<option value={r}>{r.toLocaleString()} Hz</option>{/each}
       </select>
     </div>
-    <div class="field third" data-tooltip="The estimated latency of the audio output device.">
-      <label for="fp-output-latency-s">OUTPUT LATENCY (S)</label>
-      <input id="fp-output-latency-s"
+    <div class="field third">
+      <label for="fp-output-latency-s">Output latency (s)</label>
+      <input
+        id="fp-output-latency-s"
         type="number"
         min="0"
         step="0.001"
         value={numVal(fp.audio_output_latency)}
-        on:input={(e) => fp = setFloat(fp, "audio_output_latency", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setFloat(fp, "audio_output_latency", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
-    <div class="field third" data-tooltip="The maximum number of channels the audio device supports.">
-      <label for="fp-max-channels">MAX CHANNELS</label>
-      <select id="fp-max-channels"
+    <div class="field third">
+      <label for="fp-max-channels">Max channels</label>
+      <select
+        id="fp-max-channels"
         value={fp.audio_max_channel_count ?? ""}
-        on:change={(e) => fp = setSelectNum(fp, "audio_max_channel_count", e)}
+        on:change={(e) => (fp = setSelectNum(fp, "audio_max_channel_count", e))}
         class="input-field"
       >
-        <option value="">AUTO</option>
+        <option value="">Auto</option>
         {#each MAX_CHANNELS as n}<option value={n}>{n}</option>{/each}
       </select>
     </div>

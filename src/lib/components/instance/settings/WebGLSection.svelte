@@ -10,6 +10,13 @@
   export let customWebgl = false;
   export let conflicts: FingerprintConflict[] = [];
 
+  $: setCount = [
+    fp.webgl_renderer,
+    fp.webgl_vendor,
+    fp.canvas_noise,
+    fp.block_webgl,
+  ].filter((v) => v != null && v !== false).length;
+
   function applyWebglPreset(e: Event) {
     const val = (e.target as HTMLSelectElement).value;
     selectedWebglPreset = val;
@@ -22,7 +29,7 @@
       customWebgl = true;
       return;
     }
-    const idx = parseInt(val);
+    const idx = parseInt(val, 10);
     if (isNaN(idx)) return;
     const combos = $presetDerivedOptions.webglCombos;
     if (idx >= 0 && idx < combos.length) {
@@ -33,8 +40,8 @@
 </script>
 
 <SettingsSection
-  title="WebGL & Canvas"
-  hint="{[fp.webgl_renderer, fp.webgl_vendor, fp.canvas_noise, fp.block_webgl].filter((v) => v != null).length} set"
+  title="Graphics & canvas"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
   <div class="field">
@@ -59,18 +66,18 @@
   {/if}
   {#if customWebgl}
     <div class="field">
-      <label for="fp-renderer-custom">Renderer (custom)</label>
+      <label for="fp-renderer-custom">Renderer</label>
       <input
         id="fp-renderer-custom"
         type="text"
         value={fp.webgl_renderer ?? ""}
         on:input={(e) => (fp = setStr(fp, "webgl_renderer", e))}
-        placeholder="e.g. ANGLE (NVIDIA, NVIDIA GeForce RTX 3080...)"
+        placeholder="e.g. ANGLE (NVIDIA, NVIDIA GeForce RTX 3080…)"
         class="input-field mono"
       />
     </div>
     <div class="field">
-      <label for="fp-vendor-custom">Vendor (custom)</label>
+      <label for="fp-vendor-custom">Vendor</label>
       <input
         id="fp-vendor-custom"
         type="text"
@@ -87,36 +94,38 @@
     </div>
   {/if}
   <div class="toggle-item mt">
-    <div class="label-group">
-      <label for="fp-canvas-noise">Canvas readback noise</label>
-      <span class="field-hint">Replace canvas/WebGL readback with randomized data and block WebGPU</span>
+    <div class="setting-title-row">
+      <label for="fp-canvas-noise">Randomize canvas</label>
+      <button type="button" class="tip" aria-label="Adds subtle noise to canvas readback and blocks WebGPU." data-tip="Adds subtle noise to canvas readback and blocks WebGPU.">?</button>
     </div>
     <label class="switch">
       <input
         id="fp-canvas-noise"
         type="checkbox"
         checked={fp.canvas_noise ?? false}
-        on:change={(e) => (fp = setBool(fp, "canvas_noise", (e.target as HTMLInputElement).checked))}
+        on:change={(e) =>
+          (fp = setBool(fp, "canvas_noise", (e.target as HTMLInputElement).checked))}
       />
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
-    <div class="label-group">
+  <div class="toggle-item">
+    <div class="setting-title-row">
       <label for="fp-block-webgl">Disable WebGL</label>
-      <span class="field-hint">Turns off WebGL completely via webgl.disabled</span>
+      <button type="button" class="tip" aria-label="Turns off 3D graphics APIs completely." data-tip="Turns off 3D graphics APIs completely.">?</button>
     </div>
     <label class="switch">
       <input
         id="fp-block-webgl"
         type="checkbox"
         checked={fp.block_webgl ?? false}
-        on:change={(e) => (fp = setBool(fp, "block_webgl", (e.target as HTMLInputElement).checked))}
+        on:change={(e) =>
+          (fp = setBool(fp, "block_webgl", (e.target as HTMLInputElement).checked))}
       />
       <span class="slider"></span>
     </label>
   </div>
-  <div class="toggle-item mt">
+  <div class="toggle-item">
     <label for="fp-block-webgl-if-not-defined">Block undefined shader precisions</label>
     <label class="switch">
       <input

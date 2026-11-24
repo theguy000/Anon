@@ -16,6 +16,13 @@
   $: dntVal = fp.do_not_track ?? "";
   $: cpuArchVal = fp.cpu_arch ?? "";
   $: cpuMakerVal = fp.cpu_manufacturer ?? "";
+  $: setCount = [
+    fp.user_agent,
+    fp.platform,
+    fp.hardware_concurrency,
+    fp.cpu_arch,
+    fp.cpu_manufacturer,
+  ].filter((v) => v != null).length;
 
   function setStr(field: keyof FingerprintConfig, val: string) {
     (fp as Record<string, unknown>)[field] = val === "" ? null : val;
@@ -28,10 +35,8 @@
 </script>
 
 <SettingsSection
-  title="Navigator & CPU"
-  hint="{[fp.user_agent, fp.platform, fp.hardware_concurrency, fp.cpu_arch, fp.cpu_manufacturer].filter(
-    (v) => v != null,
-  ).length} set"
+  title="Device & CPU"
+  hint={setCount > 0 ? `${setCount} set` : "Auto"}
   bind:open
 >
   <div class="field">
