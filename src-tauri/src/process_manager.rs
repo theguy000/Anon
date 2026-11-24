@@ -177,7 +177,26 @@ pub fn get_running_instances() -> Vec<RunningInstance> {
     alive
 }
 
-/// Stop an instance by killing the process and its direct children.
+fn request_graceful_close(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output();
+    }
+}
+
+/// Request graceful browser shutdown so SQLite/session files flush cleanly,
+/// escalating to force-kill only if the process does not exit in time.
 pub fn stop_instance(instance_id: &str) -> Result<(), String> {
     let pid = {
         let map = get_map().lock().unwrap();
@@ -186,12 +205,21 @@ pub fn stop_instance(instance_id: &str) -> Result<(), String> {
 
     match pid {
         Some(pid) => {
-            let sysinfo_pid = sysinfo::Pid::from_u32(pid);
+            if !is_pid_alive(pid) {
+                unregister(instance_id);
+                crate::socks5_relay::stop_for_instance(instance_id);
+                return Ok(());
+            }
 
-            // Refresh all processes so we can find children.
-            // We use `everything()` here because we need parent info + exe info
-            // to properly walk the tree — but this only happens on explicit stop,
-            // not in hot-path polling.
+            request_graceful_close(pid);
+            for _ in 0..25 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if !is_pid_alive(pid) {
+                    return Ok(());
+                }
+            }
+
+            let sysinfo_pid = sysinfo::Pid::from_u32(pid);
             let mut sys = get_system().lock().unwrap();
             sys.refresh_processes_specifics(
                 ProcessesToUpdate::All,
@@ -199,7 +227,6 @@ pub fn stop_instance(instance_id: &str) -> Result<(), String> {
                 ProcessRefreshKind::nothing(),
             );
 
-            // Kill child processes first (content processes, GPU process, etc.)
             let children: Vec<sysinfo::Pid> = sys
                 .processes()
                 .iter()
@@ -218,15 +245,12 @@ pub fn stop_instance(instance_id: &str) -> Result<(), String> {
                 }
             }
 
-            // Kill the main browser process
             if let Some(process) = sys.process(sysinfo_pid) {
                 process.kill();
                 drop(sys);
-                // The background watcher task will detect the exit and unregister
                 Ok(())
             } else {
                 drop(sys);
-                // Process already dead, clean up
                 unregister(instance_id);
                 Ok(())
             }
@@ -282,7 +306,6 @@ pub fn find_browser_pid(profile_dir: &std::path::Path) -> Option<u32> {
     );
 
     for process in sys.processes().values() {
-        // Only consider camoufox/firefox processes.
         let exe_name = process
             .exe()
             .and_then(|p| p.file_name())
@@ -290,47 +313,78 @@ pub fn find_browser_pid(profile_dir: &std::path::Path) -> Option<u32> {
             .unwrap_or("")
             .to_lowercase();
 
-        // Log every camoufox/firefox process found for diagnosis
-        if exe_name.contains("camoufox") || exe_name.contains("firefox") {
-            let cmd_str: Vec<String> = process
-                .cmd()
-                .iter()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            eprintln!(
-                "[find_browser_pid] candidate exe={} cmd={:?}",
-                exe_name, cmd_str
-            );
-        }
+        let cmd: Vec<String> = process
+            .cmd()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
 
-        if !exe_name.contains("camoufox") && !exe_name.contains("firefox") {
-            continue;
-        }
-
-        let cmd = process.cmd();
-        for (i, arg) in cmd.iter().enumerate() {
-            let arg_lower = arg.to_string_lossy().to_lowercase().replace('/', "\\");
-
-            // Match `--profile <dir>` as two separate arguments.
-            if arg_lower == "--profile" {
-                if let Some(next) = cmd.get(i + 1) {
-                    let next_lower = next.to_string_lossy().to_lowercase().replace('/', "\\");
-                    eprintln!(
-                        "[find_browser_pid] --profile arg: got={:?} want={:?}",
-                        next_lower, profile_str
-                    );
-                    if next_lower == profile_str {
-                        return Some(process.pid().as_u32());
-                    }
-                }
-            }
-
-            // Also catch cases where the profile path appears directly in an arg.
-            if arg_lower.contains(&profile_str) {
-                return Some(process.pid().as_u32());
-            }
+        if is_main_browser_cmdline(&exe_name, &cmd, &profile_str) {
+            return Some(process.pid().as_u32());
         }
     }
 
     None
+}
+
+pub(crate) fn is_main_browser_cmdline(exe_name: &str, cmd: &[String], profile_str: &str) -> bool {
+    let exe_lower = exe_name.to_lowercase();
+    if (!exe_lower.contains("camoufox") && !exe_lower.contains("firefox"))
+        || exe_lower.contains("plugin-container")
+        || exe_lower.contains("crashhelper")
+        || exe_lower.contains("nmhproxy")
+    {
+        return false;
+    }
+
+    let lowered: Vec<String> = cmd
+        .iter()
+        .map(|a| a.to_lowercase().replace('/', "\\"))
+        .collect();
+
+    if lowered.iter().any(|a| a == "-contentproc") {
+        return false;
+    }
+
+    for (i, arg) in lowered.iter().enumerate() {
+        if arg == "--profile" || arg == "-profile" {
+            if let Some(next) = lowered.get(i + 1) {
+                if next == profile_str {
+                    return true;
+                }
+            }
+        }
+        if arg.contains(profile_str) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn excludes_firefox_content_child_processes_when_matching_profile_pid() {
+        let profile = r"c:\users\dev\appdata\roaming\anon\profiles\abc";
+        let main_cmd = vec![
+            "camoufox.exe".into(),
+            "--no-remote".into(),
+            "--profile".into(),
+            profile.into(),
+        ];
+        let child_cmd = vec![
+            "camoufox.exe".into(),
+            "-contentproc".into(),
+            "-parentBuildID".into(),
+            "20261122".into(),
+            "-prefsHandle".into(),
+            "123".into(),
+            profile.into(),
+        ];
+        assert!(is_main_browser_cmdline("camoufox.exe", &main_cmd, profile));
+        assert!(!is_main_browser_cmdline("camoufox.exe", &child_cmd, profile));
+        assert!(!is_main_browser_cmdline("plugin-container.exe", &main_cmd, profile));
+    }
 }

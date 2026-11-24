@@ -8,6 +8,7 @@ mod process_manager;
 mod proxy_tester;
 mod session_manager;
 mod settings;
+mod socks5_relay;
 
 use tauri::{Emitter, Manager};
 
@@ -129,7 +130,9 @@ async fn is_instance_running(id: String) -> bool {
 
 #[tauri::command]
 async fn stop_instance(id: String) -> Result<(), String> {
-    process_manager::stop_instance(&id)
+    tokio::task::spawn_blocking(move || process_manager::stop_instance(&id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Called by the frontend when the user picks an action from the exit
@@ -139,13 +142,21 @@ async fn stop_instance(id: String) -> Result<(), String> {
 async fn confirm_close_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
     match action.as_str() {
         "stop_all" => {
-            // Kill every running instance, then quit
             let running = process_manager::get_running_instances();
             for inst in &running {
-                let _ = process_manager::stop_instance(&inst.id);
+                let id = inst.id.clone();
+                let _ = tokio::task::spawn_blocking(move || process_manager::stop_instance(&id)).await;
+                socks5_relay::stop_for_instance(&inst.id);
             }
-            // Give processes a moment to exit
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            for _ in 0..20 {
+                if !process_manager::has_running_instances() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            }
+            for inst in &running {
+                let _ = instances::cleanup_if_ephemeral(&app, &inst.id).await;
+            }
             app.exit(0);
             Ok(())
         }

@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
-use crate::camoufox::get_app_dir;
+use crate::camoufox::{get_data_dir, write_json_atomic};
 use crate::process_manager;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -449,7 +449,7 @@ pub struct InstanceConfig {
 }
 
 pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
-    let mut path = get_app_dir(app).await;
+    let mut path = get_data_dir(app).await;
     path.push("profiles");
     if !path.exists() {
         fs::create_dir_all(&path).unwrap();
@@ -457,166 +457,336 @@ pub async fn get_profiles_dir(app: &AppHandle) -> PathBuf {
     path
 }
 
-fn ensure_user_js(
-    instance_dir: &Path,
-    proxy: &Option<String>,
-    proxy_config: &Option<ProxyConfig>,
-    persist_data: bool,
-) -> io::Result<()> {
-    let user_js_path = instance_dir.join("user.js");
-    let mut user_js_content = String::from("// Anon Instance Preferences\n");
-
-    // Persistence preferences
-    if persist_data {
-        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_entries\", 50);\n");
-        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_total_viewers\", -1);\n");
-        user_js_content.push_str("user_pref(\"browser.formfill.enable\", true);\n");
-        user_js_content.push_str("user_pref(\"browser.places.interactions.enabled\", true);\n");
-        user_js_content.push_str("user_pref(\"browser.urlbar.suggest.history\", true);\n");
-        user_js_content.push_str("user_pref(\"signon.rememberSignons\", true);\n");
-        user_js_content.push_str("user_pref(\"privacy.clearOnShutdown.openWindows\", false);\n");
-        user_js_content.push_str("user_pref(\"browser.sessionstore.resume_from_crash\", true);\n");
-    } else {
-        // Explicitly disable if turned off
-        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_entries\", 0);\n");
-        user_js_content.push_str("user_pref(\"browser.sessionhistory.max_total_viewers\", 0);\n");
-        user_js_content.push_str("user_pref(\"browser.formfill.enable\", false);\n");
-        user_js_content.push_str("user_pref(\"browser.places.interactions.enabled\", false);\n");
-        user_js_content.push_str("user_pref(\"browser.urlbar.suggest.history\", false);\n");
-        user_js_content.push_str("user_pref(\"signon.rememberSignons\", false);\n");
-        user_js_content.push_str("user_pref(\"privacy.clearOnShutdown.openWindows\", true);\n");
-        user_js_content.push_str("user_pref(\"browser.sessionstore.resume_from_crash\", false);\n");
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(val) = u8::from_str_radix(hex, 16) {
+                    out.push(val);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
     }
+    String::from_utf8_lossy(&out).into_owned()
+}
 
-    // Proxy settings — prefer structured proxy_config, fall back to legacy proxy string
-    let has_proxy = if let Some(pc) = proxy_config {
-        let host = pc.host.as_deref().unwrap_or("");
-        let port = pc.port.unwrap_or(0);
-        !host.is_empty() && port > 0 && pc.proxy_type.is_some()
-    } else {
-        proxy.is_some()
+pub(crate) fn parse_legacy_proxy_string(raw: &str) -> Option<ProxyConfig> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (scheme_raw, rest) = trimmed.split_once("://")?;
+    let proxy_type = match scheme_raw.to_ascii_lowercase().as_str() {
+        "http" | "https" => "http",
+        "socks4" => "socks4",
+        "socks5" => "socks5",
+        _ => return None,
     };
 
-    if has_proxy {
-        // Camoufox leaves WebRTC on by default, and ICE candidate gathering runs
-        // directly against the host's network interfaces — a proxy does not
-        // intercept it. Without this the real host IP is handed to every site,
-        // which defeats the proxy outright and links every instance to this host.
-        user_js_content.push_str("user_pref(\"media.peerconnection.enabled\", false);\n");
+    let rest = rest.split('/').next().unwrap_or(rest);
+    let (userinfo, hostport) = match rest.rsplit_once('@') {
+        Some((u, hp)) => (Some(u), hp),
+        None => (None, rest),
+    };
 
-        // Firefox proxies localhost by default (allow_hijacking_localhost=true),
-        // so any locally served page fails with ERR_CONNECTION_REFUSED on a
-        // proxied instance. Bypass the proxy for loopback.
-        user_js_content
-            .push_str("user_pref(\"network.proxy.allow_hijacking_localhost\", false);\n");
-        user_js_content.push_str(
-            "user_pref(\"network.proxy.no_proxies_on\", \"localhost, 127.0.0.1, ::1\");\n",
-        );
+    let (host, port_str) = hostport.rsplit_once(':')?;
+    let host = host.trim_matches(|c| c == '[' || c == ']');
+    let port: u16 = port_str.parse().ok()?;
+    if host.is_empty() || port == 0 {
+        return None;
     }
 
+    let (username, password) = match userinfo {
+        Some(u) => match u.split_once(':') {
+            Some((user, pass)) => (Some(percent_decode(user)), Some(percent_decode(pass))),
+            None => (Some(percent_decode(u)), None),
+        },
+        None => (None, None),
+    };
+
+    Some(ProxyConfig {
+        proxy_type: Some(proxy_type.to_string()),
+        host: Some(host.to_string()),
+        port: Some(port),
+        username,
+        password,
+    })
+}
+
+pub(crate) fn resolve_effective_proxy(
+    proxy_config: &Option<ProxyConfig>,
+    legacy_proxy: &Option<String>,
+) -> Option<ProxyConfig> {
     if let Some(pc) = proxy_config {
-        if let Some(ref ptype) = pc.proxy_type {
-            let host = pc.host.as_deref().unwrap_or("");
-            let port = pc.port.unwrap_or(0);
+        let valid = pc.proxy_type.as_deref().is_some_and(|t| !t.is_empty())
+            && pc.host.as_deref().is_some_and(|h| !h.is_empty())
+            && pc.port.unwrap_or(0) > 0;
+        if valid {
+            return Some(pc.clone());
+        }
+    }
+    legacy_proxy
+        .as_deref()
+        .and_then(parse_legacy_proxy_string)
+}
 
+fn format_legacy_proxy(pc: &ProxyConfig) -> Option<String> {
+    let ptype = pc.proxy_type.as_deref()?;
+    let host = pc.host.as_deref()?;
+    let port = pc.port?;
+    if host.is_empty() || port == 0 {
+        return None;
+    }
+    match (pc.username.as_deref(), pc.password.as_deref()) {
+        (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
+            Some(format!("{}://{}:{}@{}:{}", ptype, user, pass, host, port))
+        }
+        (Some(user), _) if !user.is_empty() => {
+            Some(format!("{}://{}@{}:{}", ptype, user, host, port))
+        }
+        _ => Some(format!("{}://{}:{}", ptype, host, port)),
+    }
+}
+
+fn push_user_pref(out: &mut String, key: &str, value: &serde_json::Value) {
+    let encoded_key = serde_json::to_string(key).unwrap();
+    let encoded_val = serde_json::to_string(value).unwrap();
+    out.push_str(&format!("user_pref({}, {});\n", encoded_key, encoded_val));
+}
+
+pub(crate) fn build_profile_user_prefs(
+    resolved_proxy: Option<&ProxyConfig>,
+    persist_data: bool,
+    block_webrtc: bool,
+) -> Vec<(&'static str, serde_json::Value)> {
+    let mut prefs: Vec<(&'static str, serde_json::Value)> = Vec::new();
+
+    // Keep stock 50: setting 0 forces window.history.length === 0 (bot tell per camoufox.cfg).
+    prefs.push(("browser.sessionhistory.max_entries", serde_json::json!(50)));
+
+    if persist_data {
+        prefs.push(("browser.sessionhistory.max_total_viewers", serde_json::json!(-1)));
+        prefs.push(("browser.startup.page", serde_json::json!(3)));
+        prefs.push(("browser.sessionstore.resume_from_crash", serde_json::json!(true)));
+        prefs.push(("browser.sessionstore.privacy_level", serde_json::json!(0)));
+        prefs.push(("browser.formfill.enable", serde_json::json!(true)));
+        prefs.push(("browser.places.interactions.enabled", serde_json::json!(true)));
+        prefs.push(("browser.urlbar.suggest.history", serde_json::json!(true)));
+        prefs.push(("signon.rememberSignons", serde_json::json!(true)));
+        prefs.push(("privacy.sanitize.sanitizeOnShutdown", serde_json::json!(false)));
+        prefs.push(("privacy.clearOnShutdown.openWindows", serde_json::json!(false)));
+    } else {
+        prefs.push(("browser.sessionhistory.max_total_viewers", serde_json::json!(0)));
+        prefs.push(("browser.startup.page", serde_json::json!(1)));
+        prefs.push(("browser.sessionstore.resume_from_crash", serde_json::json!(false)));
+        prefs.push(("browser.sessionstore.privacy_level", serde_json::json!(2)));
+        prefs.push(("browser.formfill.enable", serde_json::json!(false)));
+        prefs.push(("browser.places.interactions.enabled", serde_json::json!(false)));
+        prefs.push(("browser.urlbar.suggest.history", serde_json::json!(false)));
+        prefs.push(("signon.rememberSignons", serde_json::json!(false)));
+        prefs.push(("privacy.sanitize.sanitizeOnShutdown", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown.cookies", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown.cache", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown.history", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown.offlineApps", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown.sessions", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown.openWindows", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown_v2.cookiesAndStorage", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown_v2.cache", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown_v2.browsingHistoryAndDownloads", serde_json::json!(true)));
+        prefs.push(("privacy.clearOnShutdown_v2.formdata", serde_json::json!(true)));
+    }
+
+    // Explicitly reset all proxy fields first so switching proxy types or to Direct
+    // clears stale values previously persisted into prefs.js.
+    let mut proxy_type = 0i32;
+    let mut http_host = "";
+    let mut http_port = 0u16;
+    let mut socks_host = "";
+    let mut socks_port = 0u16;
+    let mut socks_version = 5i32;
+    let mut socks_remote_dns = false;
+
+    if let Some(pc) = resolved_proxy {
+        if let (Some(ptype), Some(host), Some(port)) =
+            (pc.proxy_type.as_deref(), pc.host.as_deref(), pc.port)
+        {
             if !host.is_empty() && port > 0 {
-                // Enable manual proxy configuration
-                user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
-
-                match ptype.as_str() {
+                match ptype {
                     "http" => {
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.http\", \"{}\");\n",
-                            host
-                        ));
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.http_port\", {});\n",
-                            port
-                        ));
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.ssl\", \"{}\");\n",
-                            host
-                        ));
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.ssl_port\", {});\n",
-                            port
-                        ));
+                        proxy_type = 1;
+                        http_host = host;
+                        http_port = port;
                     }
                     "socks4" => {
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks\", \"{}\");\n",
-                            host
-                        ));
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks_port\", {});\n",
-                            port
-                        ));
-                        user_js_content
-                            .push_str("user_pref(\"network.proxy.socks_version\", 4);\n");
-                        user_js_content
-                            .push_str("user_pref(\"network.proxy.socks_remote_dns\", false);\n");
+                        proxy_type = 1;
+                        socks_host = host;
+                        socks_port = port;
+                        socks_version = 4;
                     }
                     "socks5" => {
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks\", \"{}\");\n",
-                            host
-                        ));
-                        user_js_content.push_str(&format!(
-                            "user_pref(\"network.proxy.socks_port\", {});\n",
-                            port
-                        ));
-                        user_js_content
-                            .push_str("user_pref(\"network.proxy.socks_version\", 5);\n");
-                        user_js_content
-                            .push_str("user_pref(\"network.proxy.socks_remote_dns\", true);\n");
+                        proxy_type = 1;
+                        socks_host = host;
+                        socks_port = port;
+                        socks_version = 5;
+                        socks_remote_dns = true;
                     }
                     _ => {}
                 }
             }
         }
-    } else if proxy.is_some() {
-        // Legacy fallback: old proxy string
-        user_js_content.push_str("user_pref(\"network.proxy.type\", 1);\n");
     }
 
-    // Allow unsigned unpacked extensions (e.g. for proxy authentication)
-    user_js_content.push_str("user_pref(\"extensions.autoDisableScopes\", 0);\n");
-    user_js_content.push_str("user_pref(\"xpinstall.signatures.required\", false);\n");
+    prefs.push(("network.proxy.type", serde_json::json!(proxy_type)));
+    prefs.push(("network.proxy.http", serde_json::json!(http_host)));
+    prefs.push(("network.proxy.http_port", serde_json::json!(http_port)));
+    prefs.push(("network.proxy.ssl", serde_json::json!(http_host)));
+    prefs.push(("network.proxy.ssl_port", serde_json::json!(http_port)));
+    prefs.push(("network.proxy.socks", serde_json::json!(socks_host)));
+    prefs.push(("network.proxy.socks_port", serde_json::json!(socks_port)));
+    prefs.push(("network.proxy.socks_version", serde_json::json!(socks_version)));
+    prefs.push(("network.proxy.socks_remote_dns", serde_json::json!(socks_remote_dns)));
+    prefs.push(("network.proxy.allow_hijacking_localhost", serde_json::json!(false)));
+    prefs.push((
+        "network.proxy.no_proxies_on",
+        serde_json::json!(if proxy_type == 1 { "localhost, 127.0.0.1, ::1" } else { "" }),
+    ));
 
+    // Camoufox v159 enforces ICE proxy_only_if_behind_proxy + mDNS obfuscation in camoufox.cfg;
+    // only disable PeerConnection outright when explicitly blocking WebRTC.
+    prefs.push(("media.peerconnection.enabled", serde_json::json!(!block_webrtc)));
+
+    prefs.push(("extensions.autoDisableScopes", serde_json::json!(0)));
+    prefs.push(("xpinstall.signatures.required", serde_json::json!(false)));
+    prefs
+}
+
+fn ensure_user_js(
+    instance_dir: &Path,
+    resolved_proxy: Option<&ProxyConfig>,
+    persist_data: bool,
+    block_webrtc: bool,
+) -> io::Result<()> {
+    let user_js_path = instance_dir.join("user.js");
+    let mut user_js_content = String::from("// Anon Instance Preferences\n");
+    for (key, value) in build_profile_user_prefs(resolved_proxy, persist_data, block_webrtc) {
+        push_user_pref(&mut user_js_content, key, &value);
+    }
     fs::write(user_js_path, user_js_content)
+}
+
+/// Remove Anon-managed startup pref keys from `prefs.js` so user-branch copies
+/// cannot shadow updated `CAMOU_PREFS_1..N` default-branch values on relaunch.
+pub(crate) fn scrub_managed_prefs_from_prefs_js(
+    instance_dir: &Path,
+    managed_keys: &[&str],
+) -> io::Result<()> {
+    let prefs_path = instance_dir.join("prefs.js");
+    if !prefs_path.is_file() || managed_keys.is_empty() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&prefs_path)?;
+    let mut changed = false;
+    let mut kept = String::with_capacity(content.len());
+    for line in content.lines() {
+        let should_drop = managed_keys
+            .iter()
+            .any(|k| line.trim_start().starts_with(&format!("user_pref(\"{}\",", k)));
+        if should_drop {
+            changed = true;
+        } else {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    if changed {
+        fs::write(&prefs_path, kept)?;
+    }
+    Ok(())
+}
+
+/// Serialize JSON with non-ASCII characters escaped as \uXXXX so camoufox.cfg
+/// reading CAMOU_PREFS_* via Windows ANSI getenv() never corrupts UTF-8.
+pub(crate) fn encode_ascii_json(value: &serde_json::Value) -> String {
+    let raw = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+        } else {
+            let mut buf = [0u16; 2];
+            for unit in ch.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{:04x}", unit));
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn chunk_env_value(prefix: &str, data: &str, chunk_size: usize) -> Vec<(String, String)> {
+    let chars: Vec<char> = data.chars().collect();
+    chars
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(i, chunk)| (format!("{}_{}", prefix, i + 1), chunk.iter().collect()))
+        .collect()
+}
+
+pub(crate) fn apply_camou_prefs_env(
+    cmd: &mut std::process::Command,
+    prefs: &serde_json::Map<String, serde_json::Value>,
+) {
+    if prefs.is_empty() {
+        return;
+    }
+    let chunk_size = if cfg!(windows) { 2047 } else { 32767 };
+    let encoded = encode_ascii_json(&serde_json::Value::Object(prefs.clone()));
+    for (k, v) in chunk_env_value("CAMOU_PREFS", &encoded, chunk_size) {
+        cmd.env(k, v);
+    }
 }
 
 fn ensure_proxy_auth_extension(
     instance_dir: &Path,
-    proxy_config: &Option<ProxyConfig>,
+    proxy_config: Option<&ProxyConfig>,
 ) -> io::Result<Option<PathBuf>> {
     let ext_dir = instance_dir.join("proxy_auth_ext");
+    // Firefox webRequest.onAuthRequired only supports HTTP/HTTPS proxies;
+    // SOCKS5 auth is handled by socks5_relay instead.
     if let Some(pc) = proxy_config {
-        if let (Some(ref u), Some(ref p)) = (&pc.username, &pc.password) {
-            if !u.is_empty() {
-                fs::create_dir_all(&ext_dir)?;
+        if pc.proxy_type.as_deref() == Some("http") {
+            if let (Some(ref u), Some(ref p)) = (&pc.username, &pc.password) {
+                if !u.is_empty() {
+                    fs::create_dir_all(&ext_dir)?;
 
-                let manifest = serde_json::json!({
-                    "manifest_version": 2,
-                    "name": "Anon Proxy Auth",
-                    "version": "1.0",
-                    "description": "Proxy authentication for Anon Browser",
-                    "permissions": [
-                        "webRequest",
-                        "webRequestBlocking",
-                        "<all_urls>"
-                    ],
-                    "background": {
-                        "scripts": ["background.js"]
-                    }
-                });
-                fs::write(
-                    ext_dir.join("manifest.json"),
-                    serde_json::to_string_pretty(&manifest)?,
-                )?;
+                    let manifest = serde_json::json!({
+                        "manifest_version": 2,
+                        "name": "Anon Proxy Auth",
+                        "version": "1.0",
+                        "description": "Proxy authentication for Anon Browser",
+                        "permissions": [
+                            "webRequest",
+                            "webRequestBlocking",
+                            "<all_urls>"
+                        ],
+                        "background": {
+                            "scripts": ["background.js"]
+                        }
+                    });
+                    fs::write(
+                        ext_dir.join("manifest.json"),
+                        serde_json::to_string_pretty(&manifest)?,
+                    )?;
 
-                let bg_js = format!(
-                    r#"browser.webRequest.onAuthRequired.addListener(
+                    let bg_js = format!(
+                        r#"browser.webRequest.onAuthRequired.addListener(
     function(details) {{
         if (details.isProxy) {{
             return {{
@@ -630,11 +800,12 @@ fn ensure_proxy_auth_extension(
     {{ urls: ["<all_urls>"] }},
     ["blocking"]
 );"#,
-                    serde_json::to_string(u).unwrap_or_default(),
-                    serde_json::to_string(p).unwrap_or_default()
-                );
-                fs::write(ext_dir.join("background.js"), bg_js)?;
-                return Ok(Some(ext_dir));
+                        serde_json::to_string(u).unwrap_or_default(),
+                        serde_json::to_string(p).unwrap_or_default()
+                    );
+                    fs::write(ext_dir.join("background.js"), bg_js)?;
+                    return Ok(Some(ext_dir));
+                }
             }
         }
     }
@@ -646,38 +817,70 @@ fn ensure_proxy_auth_extension(
 }
 
 fn apply_camou_config_env(cmd: &mut std::process::Command, config_json: &str) {
-    const CHUNK_SIZE: usize = 2047;
-    if config_json.len() <= CHUNK_SIZE {
-        cmd.env("CAMOU_CONFIG", config_json);
-        cmd.env("CAMOU_CONFIG_1", config_json);
-    } else {
-        cmd.env_remove("CAMOU_CONFIG");
-        let chars: Vec<char> = config_json.chars().collect();
-        for (i, chunk) in chars.chunks(CHUNK_SIZE).enumerate() {
-            let chunk_str: String = chunk.iter().collect();
-            cmd.env(format!("CAMOU_CONFIG_{}", i + 1), chunk_str);
-        }
+    let chunk_size = if cfg!(windows) { 2047 } else { 32767 };
+    cmd.env_remove("CAMOU_CONFIG");
+    for (k, v) in chunk_env_value("CAMOU_CONFIG", config_json, chunk_size) {
+        cmd.env(k, v);
     }
 }
 
-fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
+pub(crate) fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
+    if !instance_dir.exists() {
+        return Ok(());
+    }
     for entry in fs::read_dir(instance_dir)? {
         let entry = entry?;
         let path = entry.path();
         let file_name = path.file_name().and_then(|n| n.to_str());
 
-        // Preserve essential config files
         if let Some(name) = file_name {
             if name == "anon_config.json" || name == "user.js" || name == "proxy_auth_ext" {
                 continue;
             }
         }
 
-        if path.is_dir() {
-            fs::remove_dir_all(path)?;
+        let res = if path.is_dir() {
+            fs::remove_dir_all(&path)
         } else {
-            fs::remove_file(path)?;
+            fs::remove_file(&path)
+        };
+        if let Err(e) = res {
+            if e.kind() != io::ErrorKind::NotFound {
+                return Err(e);
+            }
         }
+    }
+    Ok(())
+}
+
+async fn cleanup_instance_data_with_retry(instance_dir: &Path) -> io::Result<()> {
+    let mut last_err = None;
+    for attempt in 0..8 {
+        match cleanup_instance_data(instance_dir) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < 7 {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+pub async fn cleanup_if_ephemeral(app: &AppHandle, id: &str) -> Result<(), String> {
+    let profiles_dir = get_profiles_dir(app).await;
+    let instance_dir = profiles_dir.join(id);
+    let config_path = instance_dir.join("anon_config.json");
+    let persist_data = fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<InstanceConfig>(&c).ok())
+        .is_none_or(|cfg| cfg.persist_data);
+    if !persist_data {
+        cleanup_instance_data_with_retry(&instance_dir)
+            .await
+            .map_err(|e| format!("Failed to wipe ephemeral profile {}: {}", id, e))?;
     }
     Ok(())
 }
@@ -715,23 +918,30 @@ pub async fn create_instance(
         return Err("An instance with this name already exists".to_string());
     }
 
+    let app_settings = crate::settings::load_settings(app).await;
     let profiles_dir = get_profiles_dir(app).await;
     let id = uuid::Uuid::new_v4().to_string();
 
     let instance_dir = profiles_dir.join(&id);
     fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
 
+    let parsed_proxy = proxy.as_deref().and_then(parse_legacy_proxy_string);
+    let initial_proxy_config = parsed_proxy.or(app_settings.default_proxy_template);
+    let initial_proxy_str = proxy
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| initial_proxy_config.as_ref().and_then(format_legacy_proxy));
+
     let config = InstanceConfig {
         id: id.clone(),
         name,
-        proxy,
+        proxy: initial_proxy_str,
         persist_data,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64,
-        fingerprint: None,
-        proxy_config: None,
+        fingerprint: app_settings.default_fingerprint_template,
+        proxy_config: initial_proxy_config,
         tags: None,
         notes: None,
         proxy_pool: None,
@@ -742,18 +952,12 @@ pub async fn create_instance(
         fingerprint_rotation_index: None,
     };
 
-    // Save anon config
     let config_path = instance_dir.join("anon_config.json");
-    let config_json = serde_json::to_string_pretty(&config).unwrap();
-    fs::write(config_path, config_json).map_err(|e| e.to_string())?;
+    write_json_atomic(&config_path, &config)?;
 
-    // Generate user.js for persistence and proxy settings
-    let _ = ensure_user_js(
-        &instance_dir,
-        &config.proxy,
-        &config.proxy_config,
-        config.persist_data,
-    );
+    let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
+    ensure_user_js(&instance_dir, resolved_proxy.as_ref(), config.persist_data, false)
+        .map_err(|e| format!("Failed to write user.js: {}", e))?;
 
     Ok(config)
 }
@@ -773,7 +977,6 @@ pub async fn launch_instance(
     id: String,
     startup_url: Option<String>,
 ) -> Result<u32, String> {
-    // Check if already running
     if process_manager::is_running(&id) {
         return Err("Instance is already running".to_string());
     }
@@ -785,7 +988,6 @@ pub async fn launch_instance(
         return Err("Instance profile not found".to_string());
     }
 
-    // Load the full instance config (including fingerprint)
     let config_path = instance_dir.join("anon_config.json");
     let config: Option<InstanceConfig> = if config_path.exists() {
         fs::read_to_string(&config_path)
@@ -795,68 +997,95 @@ pub async fn launch_instance(
         None
     };
 
-    let proxy = config.as_ref().and_then(|c| c.proxy.clone());
-    let proxy_config = config.as_ref().and_then(|c| c.proxy_config.clone());
     let persist_data = config.as_ref().is_none_or(|c| c.persist_data);
 
-    // Proxy rotation
-    let effective_proxy;
-    let effective_proxy_config;
-    if let Some(pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
-        if !pool.is_empty() {
-            let mode = config
-                .as_ref()
-                .and_then(|c| c.proxy_rotation_mode.as_deref())
-                .unwrap_or("sequential");
-            let idx = if mode == "random" {
-                use rand::Rng;
-                rand::thread_rng().gen_range(0..pool.len())
-            } else {
-                let current = config
-                    .as_ref()
-                    .and_then(|c| c.proxy_rotation_index)
-                    .unwrap_or(0);
-                let idx = current % pool.len();
-                // Update index for next launch
-                if let Ok(contents) = fs::read_to_string(&config_path) {
-                    if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
-                        cfg.proxy_rotation_index = Some(idx + 1);
-                        let _ =
-                            fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
-                    }
-                }
-                idx
-            };
-            effective_proxy_config = Some(pool[idx].clone());
-            // Build legacy proxy string from pool entry
-            effective_proxy = effective_proxy_config.as_ref().and_then(|pc| {
-                let ptype = pc.proxy_type.as_deref()?;
-                let host = pc.host.as_deref()?;
-                let port = pc.port?;
-                Some(format!("{}://{}:{}", ptype, host, port))
-            });
-        } else {
-            effective_proxy = proxy.clone();
-            effective_proxy_config = proxy_config.clone();
-        }
-    } else {
-        effective_proxy = proxy.clone();
-        effective_proxy_config = proxy_config.clone();
+    // Guarantee ephemeral profiles start clean even after an earlier crash or hard kill.
+    if !persist_data {
+        cleanup_instance_data_with_retry(&instance_dir)
+            .await
+            .map_err(|e| format!("Failed to wipe ephemeral profile before launch: {}", e))?;
     }
 
-    // Update user.js on every launch to ensure preferences are applied
-    let _ = ensure_user_js(
+    // Resolve one canonical proxy for geo lookup, routing, and authentication.
+    let effective_proxy_config: Option<ProxyConfig> =
+        if let Some(pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
+            if !pool.is_empty() {
+                let mode = config
+                    .as_ref()
+                    .and_then(|c| c.proxy_rotation_mode.as_deref())
+                    .unwrap_or("sequential");
+                let idx = if mode == "random" {
+                    use rand::Rng;
+                    rand::thread_rng().gen_range(0..pool.len())
+                } else {
+                    let current = config
+                        .as_ref()
+                        .and_then(|c| c.proxy_rotation_index)
+                        .unwrap_or(0);
+                    let idx = current % pool.len();
+                    if let Ok(contents) = fs::read_to_string(&config_path) {
+                        if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
+                            cfg.proxy_rotation_index = Some(idx + 1);
+                            let _ = write_json_atomic(&config_path, &cfg);
+                        }
+                    }
+                    idx
+                };
+                Some(pool[idx].clone())
+            } else {
+                resolve_effective_proxy(
+                    &config.as_ref().and_then(|c| c.proxy_config.clone()),
+                    &config.as_ref().and_then(|c| c.proxy.clone()),
+                )
+            }
+        } else {
+            resolve_effective_proxy(
+                &config.as_ref().and_then(|c| c.proxy_config.clone()),
+                &config.as_ref().and_then(|c| c.proxy.clone()),
+            )
+        };
+
+    // For authenticated SOCKS5 proxies, route Firefox through a per-instance loopback relay
+    // that handles RFC 1929 upstream auth (Firefox WebExtensions only auth HTTP proxies).
+    let mut browser_proxy_config = effective_proxy_config.clone();
+    if let Some(ref pc) = effective_proxy_config {
+        let is_socks5_auth = pc.proxy_type.as_deref() == Some("socks5")
+            && pc.username.as_deref().is_some_and(|u| !u.is_empty());
+        if is_socks5_auth {
+            let upstream_host = pc.host.clone().unwrap_or_default();
+            let upstream_port = pc.port.unwrap_or(0);
+            let username = pc.username.clone().unwrap_or_default();
+            let password = pc.password.clone().unwrap_or_default();
+            let local_port = crate::socks5_relay::start_for_instance(
+                &id,
+                upstream_host,
+                upstream_port,
+                username,
+                password,
+            )
+            .await?;
+            browser_proxy_config = Some(ProxyConfig {
+                proxy_type: Some("socks5".to_string()),
+                host: Some("127.0.0.1".to_string()),
+                port: Some(local_port),
+                username: None,
+                password: None,
+            });
+        }
+    }
+
+    ensure_user_js(
         &instance_dir,
-        &effective_proxy,
-        &effective_proxy_config,
+        browser_proxy_config.as_ref(),
         persist_data,
-    );
+        false,
+    )
+    .map_err(|e| format!("Failed to write user.js: {}", e))?;
 
     let bin_path = crate::camoufox::get_camoufox_binary(app)
         .await
         .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
-    // Fingerprint rotation
     let effective_fp = if let Some(pool) = config.as_ref().and_then(|c| c.fingerprint_pool.as_ref())
     {
         if !pool.is_empty() {
@@ -876,8 +1105,7 @@ pub async fn launch_instance(
                 if let Ok(contents) = fs::read_to_string(&config_path) {
                     if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
                         cfg.fingerprint_rotation_index = Some(idx + 1);
-                        let _ =
-                            fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
+                        let _ = write_json_atomic(&config_path, &cfg);
                     }
                 }
                 idx
@@ -890,37 +1118,14 @@ pub async fn launch_instance(
         config.as_ref().and_then(|c| c.fingerprint.as_ref())
     };
 
-    // Detect installed Camoufox major version (e.g. "156" or "152")
     let engine_ver_str = crate::camoufox::get_camoufox_version(app).await;
-    let target_ff_ver = extract_major_version(&engine_ver_str).unwrap_or("156");
+    let target_ff_ver = extract_major_version(&engine_ver_str).unwrap_or("159");
 
-    // Ensure proxy auth extension if credentials exist
-    let effective_proxy = if let Some(pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
-        if !pool.is_empty() {
-            let idx = config
-                .as_ref()
-                .and_then(|c| c.proxy_rotation_index)
-                .unwrap_or(0)
-                % pool.len();
-            Some(&pool[idx])
-        } else {
-            config.as_ref().and_then(|c| c.proxy_config.as_ref())
-        }
-    } else {
-        config.as_ref().and_then(|c| c.proxy_config.as_ref())
-    };
+    let proxy_ext = ensure_proxy_auth_extension(&instance_dir, effective_proxy_config.as_ref())
+        .map_err(|e| format!("Failed to prepare proxy auth extension: {}", e))?;
 
-    let proxy_ext = ensure_proxy_auth_extension(&instance_dir, &effective_proxy.cloned())
-        .ok()
-        .flatten();
-
-    // Build the CAMOU_CONFIG JSON from fingerprint settings
     let mut camou_val: serde_json::Value = if let Some(fp) = effective_fp {
         if fp.auto_fingerprint == Some(true) {
-            // Geo is resolved through the instance's own proxy so timezone,
-            // locale and position agree with the egress IP instead of this host.
-            // Seeds come from the instance id so the identity is stable across
-            // launches rather than redrawn every time.
             let geo = crate::geo::for_instance(app, &id, effective_proxy_config.as_ref()).await;
             crate::auto_fingerprint::generate_auto_config(
                 fp.auto_change_window_size.unwrap_or(true),
@@ -949,41 +1154,41 @@ pub async fn launch_instance(
         }
     }
 
+    let camou_prefs = serde_json::Map::new();
+    if !camou_prefs.is_empty() {
+        let managed_keys: Vec<&str> = camou_prefs.keys().map(String::as_str).collect();
+        let _ = scrub_managed_prefs_from_prefs_js(&instance_dir, &managed_keys);
+    }
     let camou_config_json = camou_val.to_string();
 
-    // Spawn detached process with chunked CAMOU_CONFIG env vars
     let mut cmd = std::process::Command::new(bin_path);
-    cmd.arg("--profile").arg(&instance_dir);
+    cmd.arg("--no-remote")
+        .arg("--new-instance")
+        .arg("--profile")
+        .arg(&instance_dir);
+    cmd.env("MOZ_NO_REMOTE", "1");
     apply_camou_config_env(&mut cmd, &camou_config_json);
+    apply_camou_prefs_env(&mut cmd, &camou_prefs);
     if let Some(ref url) = startup_url {
         cmd.arg(url);
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to launch instance: {}", e))?;
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            crate::socks5_relay::stop_for_instance(&id);
+            return Err(format!("Failed to launch instance: {}", e));
+        }
+    };
 
     let pid = child.id();
-
-    // Register in process manager
     process_manager::register(&id, pid);
 
-    // Spawn a lightweight async task to track the real browser process.
-    //
-    // On Windows, camoufox uses Firefox's launcher-process pattern:
-    //   1. The spawned child (stub) exits quickly after launching the real browser.
-    //   2. We wait for the stub to exit, then scan for the real browser PID by
-    //      matching --profile <instance_dir> in process command-line arguments.
-    //   3. We update the registry with the real PID and poll until it exits.
-    //   4. We emit `instance-stopped` so the frontend can update its state.
     let app_handle = app.clone();
     let instance_id = id.clone();
     let profile_dir = instance_dir.clone();
     tokio::spawn(async move {
-        // Step 1: reap the stub on the blocking pool — returns quickly.
         let _ = tokio::task::spawn_blocking(move || child.wait()).await;
 
-        // Step 2: give the real browser a moment to start, then find its PID.
-        // Retry a few times since Firefox may still be initialising.
         let mut real_pid: Option<u32> = None;
         for _ in 0..10 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -994,7 +1199,6 @@ pub async fn launch_instance(
         }
 
         if let Some(browser_pid) = real_pid {
-            // Step 3: update registry with the real browser PID and poll until it exits.
             process_manager::update_pid(&instance_id, browser_pid);
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1003,11 +1207,14 @@ pub async fn launch_instance(
                 }
             }
         }
-        // If we never found the real PID the browser either never started or
-        // exited before we could find it — either way fall through to cleanup.
 
-        // Step 4: clean up and notify frontend.
+        crate::socks5_relay::stop_for_instance(&instance_id);
         process_manager::unregister(&instance_id);
+
+        if let Err(e) = cleanup_if_ephemeral(&app_handle, &instance_id).await {
+            eprintln!("{}", e);
+        }
+
         let _ = app_handle.emit("instance-stopped", &instance_id);
     });
 
@@ -1015,6 +1222,10 @@ pub async fn launch_instance(
 }
 
 pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> Result<(), String> {
+    if !enabled && process_manager::is_running(&id) {
+        return Err("Stop the instance before switching to wipe mode".to_string());
+    }
+
     let profiles_dir = get_profiles_dir(app).await;
     let instance_dir = profiles_dir.join(&id);
 
@@ -1026,20 +1237,16 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
     if let Ok(contents) = fs::read_to_string(&config_path) {
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.persist_data = enabled;
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
 
-            // Immediately update user.js
-            let _ = ensure_user_js(
-                &instance_dir,
-                &config.proxy,
-                &config.proxy_config,
-                config.persist_data,
-            );
+            let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
+            ensure_user_js(&instance_dir, resolved_proxy.as_ref(), config.persist_data, false)
+                .map_err(|e| format!("Failed to update user.js: {}", e))?;
 
-            // If disabling, clean up data
             if !enabled {
-                let _ = cleanup_instance_data(&instance_dir);
+                cleanup_instance_data_with_retry(&instance_dir)
+                    .await
+                    .map_err(|e| format!("Failed to wipe profile data: {}", e))?;
             }
 
             return Ok(());
@@ -1073,8 +1280,7 @@ pub async fn update_instance_settings(
     if let Ok(contents) = fs::read_to_string(&config_path) {
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.fingerprint = Some(fingerprint);
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
             return Ok(conflicts);
         }
     }
@@ -1118,16 +1324,11 @@ pub async fn update_instance_proxy(
                 }
             });
 
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
 
-            // Regenerate user.js with updated proxy settings
-            let _ = ensure_user_js(
-                &instance_dir,
-                &config.proxy,
-                &config.proxy_config,
-                config.persist_data,
-            );
+            let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
+            ensure_user_js(&instance_dir, resolved_proxy.as_ref(), config.persist_data, false)
+                .map_err(|e| format!("Failed to update user.js: {}", e))?;
 
             return Ok(());
         }
@@ -1157,8 +1358,7 @@ pub async fn rename_instance(app: &AppHandle, id: String, new_name: String) -> R
     if let Ok(contents) = fs::read_to_string(&config_path) {
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.name = new_name;
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
             return Ok(());
         }
     }
@@ -1176,8 +1376,7 @@ pub async fn update_instance_tags(
     if let Ok(contents) = fs::read_to_string(&config_path) {
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.tags = if tags.is_empty() { None } else { Some(tags) };
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
             return Ok(());
         }
     }
@@ -1195,8 +1394,7 @@ pub async fn update_instance_notes(
     if let Ok(contents) = fs::read_to_string(&config_path) {
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.notes = notes.filter(|n| !n.trim().is_empty());
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
             return Ok(());
         }
     }
@@ -1300,14 +1498,10 @@ pub async fn import_instances(
         let instance_dir = profiles_dir.join(&new_id);
         fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
         let config_path = instance_dir.join("anon_config.json");
-        let config_json = serde_json::to_string_pretty(&new_config).unwrap();
-        fs::write(config_path, config_json).map_err(|e| e.to_string())?;
-        let _ = ensure_user_js(
-            &instance_dir,
-            &new_config.proxy,
-            &new_config.proxy_config,
-            new_config.persist_data,
-        );
+        write_json_atomic(&config_path, &new_config)?;
+        let resolved_proxy = resolve_effective_proxy(&new_config.proxy_config, &new_config.proxy);
+        ensure_user_js(&instance_dir, resolved_proxy.as_ref(), new_config.persist_data, false)
+            .map_err(|e| format!("Failed to write user.js: {}", e))?;
         imported.push(new_config);
     }
     Ok(imported)
@@ -1325,8 +1519,7 @@ pub async fn update_proxy_pool(
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.proxy_pool = if pool.is_empty() { None } else { Some(pool) };
             config.proxy_rotation_mode = mode;
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
             return Ok(());
         }
     }
@@ -1345,10 +1538,143 @@ pub async fn update_fingerprint_pool(
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.fingerprint_pool = if pool.is_empty() { None } else { Some(pool) };
             config.fingerprint_rotation_mode = mode;
-            let config_json = serde_json::to_string_pretty(&config).unwrap();
-            fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+            write_json_atomic(&config_path, &config)?;
             return Ok(());
         }
     }
     Err("Failed to update fingerprint pool".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "anon_instances_test_{}_{}",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn user_js_never_sets_sessionhistory_zero_and_resets_proxy_on_direct() {
+        let dir = temp_dir("userjs");
+        let proxy = ProxyConfig {
+            proxy_type: Some("socks5".into()),
+            host: Some("10.0.0.2".into()),
+            port: Some(1080),
+            username: None,
+            password: None,
+        };
+        ensure_user_js(&dir, Some(&proxy), false, false).unwrap();
+        let with_proxy = fs::read_to_string(dir.join("user.js")).unwrap();
+        assert!(with_proxy.contains("user_pref(\"browser.sessionhistory.max_entries\", 50);"));
+        assert!(with_proxy.contains("user_pref(\"privacy.sanitize.sanitizeOnShutdown\", true);"));
+        assert!(with_proxy.contains("user_pref(\"privacy.clearOnShutdown_v2.cookiesAndStorage\", true);"));
+        assert!(with_proxy.contains("user_pref(\"network.proxy.type\", 1);"));
+        assert!(with_proxy.contains("user_pref(\"network.proxy.socks\", \"10.0.0.2\");"));
+        assert!(with_proxy.contains("user_pref(\"media.peerconnection.enabled\", true);"));
+
+        ensure_user_js(&dir, None, true, false).unwrap();
+        let direct = fs::read_to_string(dir.join("user.js")).unwrap();
+        assert!(direct.contains("user_pref(\"network.proxy.type\", 0);"));
+        assert!(direct.contains("user_pref(\"network.proxy.socks\", \"\");"));
+        assert!(direct.contains("user_pref(\"network.proxy.socks_port\", 0);"));
+        assert!(direct.contains("user_pref(\"network.proxy.http\", \"\");"));
+        assert!(direct.contains("user_pref(\"privacy.sanitize.sanitizeOnShutdown\", false);"));
+        assert!(direct.contains("user_pref(\"browser.sessionstore.privacy_level\", 0);"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_instance_data_wipes_browsing_files_and_preserves_config() {
+        let dir = temp_dir("cleanup");
+        fs::write(dir.join("anon_config.json"), b"{}").unwrap();
+        fs::write(dir.join("user.js"), b"// prefs").unwrap();
+        fs::create_dir_all(dir.join("proxy_auth_ext")).unwrap();
+        fs::write(dir.join("proxy_auth_ext").join("manifest.json"), b"{}").unwrap();
+
+        fs::write(dir.join("cookies.sqlite"), b"cookie").unwrap();
+        fs::write(dir.join("places.sqlite"), b"history").unwrap();
+        fs::create_dir_all(dir.join("storage").join("default")).unwrap();
+        fs::write(dir.join("storage").join("default").join("data"), b"ls").unwrap();
+        fs::create_dir_all(dir.join("sessionstore-backups")).unwrap();
+        fs::write(dir.join("sessionstore-backups").join("recovery.jsonlz4"), b"s").unwrap();
+
+        cleanup_instance_data(&dir).unwrap();
+
+        assert!(dir.join("anon_config.json").exists());
+        assert!(dir.join("user.js").exists());
+        assert!(dir.join("proxy_auth_ext").exists());
+        assert!(!dir.join("cookies.sqlite").exists());
+        assert!(!dir.join("places.sqlite").exists());
+        assert!(!dir.join("storage").exists());
+        assert!(!dir.join("sessionstore-backups").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_proxy_parser_extracts_decoded_credentials_and_host() {
+        let parsed =
+            parse_legacy_proxy_string("socks5://alice%40org:p%40ss%3A1@proxy.test:1080").unwrap();
+        assert_eq!(parsed.proxy_type.as_deref(), Some("socks5"));
+        assert_eq!(parsed.host.as_deref(), Some("proxy.test"));
+        assert_eq!(parsed.port, Some(1080));
+        assert_eq!(parsed.username.as_deref(), Some("alice@org"));
+        assert_eq!(parsed.password.as_deref(), Some("p@ss:1"));
+    }
+
+    #[test]
+    fn proxy_auth_extension_only_created_for_authenticated_http_proxy() {
+        let dir = temp_dir("ext");
+        let socks = ProxyConfig {
+            proxy_type: Some("socks5".into()),
+            host: Some("1.2.3.4".into()),
+            port: Some(1080),
+            username: Some("u".into()),
+            password: Some("p".into()),
+        };
+        assert!(ensure_proxy_auth_extension(&dir, Some(&socks)).unwrap().is_none());
+
+        let http = ProxyConfig {
+            proxy_type: Some("http".into()),
+            ..socks
+        };
+        let ext = ensure_proxy_auth_extension(&dir, Some(&http)).unwrap();
+        assert!(ext.is_some());
+        assert!(dir.join("proxy_auth_ext").join("background.js").is_file());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encode_ascii_json_escapes_non_ascii_for_windows_camou_prefs() {
+        let val = serde_json::json!({"intl.locale.requested": "fr-FR", "label": "caf\u{00e9}"});
+        let encoded = encode_ascii_json(&val);
+        assert!(encoded.is_ascii());
+        assert!(encoded.contains("\\u00e9"));
+        let decoded: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn scrub_managed_prefs_drops_stale_user_branch_entries_only() {
+        let dir = temp_dir("scrub");
+        fs::write(
+            dir.join("prefs.js"),
+            "user_pref(\"intl.locale.requested\", \"de-DE\");\nuser_pref(\"browser.custom\", 42);\n",
+        )
+        .unwrap();
+        scrub_managed_prefs_from_prefs_js(&dir, &["intl.locale.requested"]).unwrap();
+        let after = fs::read_to_string(dir.join("prefs.js")).unwrap();
+        assert!(!after.contains("intl.locale.requested"));
+        assert!(after.contains("browser.custom"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

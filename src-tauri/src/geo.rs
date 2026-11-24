@@ -176,7 +176,7 @@ struct IpApiCountry {
 }
 
 async fn cache_path(app: &AppHandle) -> std::path::PathBuf {
-    crate::camoufox::get_app_dir(app)
+    crate::camoufox::get_data_dir(app)
         .await
         .join("geo_cache.json")
 }
