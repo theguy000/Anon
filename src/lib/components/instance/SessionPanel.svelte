@@ -10,8 +10,11 @@
   export let show = false;
   export let instanceId: string;
 
+  type SessionDataType = 'cookies' | 'localStorage' | 'cache' | 'sessions' | 'history';
+
   let loading = false;
   let sessionInfo: SessionInfo | null = null;
+  let loadError: string | null = null;
   let showClearConfirm = false;
 
   $: isRunning = $runningInstances.has(instanceId);
@@ -22,10 +25,12 @@
 
   async function loadInfo() {
     loading = true;
+    loadError = null;
     try {
       sessionInfo = await getSessionInfo(instanceId);
-    } catch {
+    } catch (e) {
       sessionInfo = null;
+      loadError = `Failed to load session data: ${e}`;
     } finally {
       loading = false;
     }
@@ -48,7 +53,7 @@
     }
   }
 
-  async function clearType(type: string) {
+  async function clearType(type: SessionDataType) {
     try {
       await clearSessionData(instanceId, [type]);
       await loadInfo();
@@ -143,6 +148,8 @@
           Clear all data
         </button>
       </div>
+    {:else if loadError}
+      <div class="sp-error">{loadError}</div>
     {:else}
       <div class="sp-loading">No session data available.</div>
     {/if}
@@ -196,6 +203,14 @@
     padding: 24px 0;
     color: var(--text-muted);
     font-size: 12.5px;
+  }
+
+  .sp-error {
+    padding: 10px 12px;
+    border: 1px solid rgba(224, 108, 108, 0.4);
+    border-radius: var(--radius);
+    color: var(--accent-danger);
+    font-size: 12px;
   }
 
   .sp-body {

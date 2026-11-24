@@ -88,17 +88,15 @@
   <div
     class="settings-backdrop"
     transition:fade={{ duration: 150 }}
-    on:click={handleClose}
-    on:keydown={(e) => e.key === 'Enter' && handleClose()}
+    on:click|self={handleClose}
     role="presentation"
   >
     <div
       class="settings-panel"
       transition:scale={{ duration: 150, start: 0.985, opacity: 0 }}
-      on:click|stopPropagation
-      on:keydown|stopPropagation
       role="dialog"
       aria-modal="true"
+      aria-label="Settings"
       tabindex="-1"
     >
       <div class="sp-header">

@@ -27,8 +27,17 @@
   let newInstancePersistData = true;
   let nameError = '';
 
+  interface CmdItem {
+    id: string;
+    label: string;
+    detail: string;
+    tone?: 'warn';
+    run: () => void;
+  }
+
   let showCmd = false;
   let cmdQuery = '';
+  let cmdActiveIndex = 0;
   let cmdInput: HTMLInputElement;
 
   type SortField = 'name' | 'created_at';
@@ -88,9 +97,60 @@
     return true;
   });
 
-  $: cmdMatches = sortedInstances.filter((i) =>
-    i.name.toLowerCase().includes(cmdQuery.trim().toLowerCase())
-  );
+  $: cmdItems = (() => {
+    const q = cmdQuery.trim().toLowerCase();
+    const list: CmdItem[] = sortedInstances.map((inst) => {
+      const running = $runningInstances.has(inst.id);
+      return {
+        id: `inst:${inst.id}`,
+        label: `${running ? 'Stop' : 'Launch'} ${inst.name}`,
+        detail: inst.proxy_config?.host ?? inst.proxy ?? 'Direct',
+        run: () => handleCmdToggle(inst.id),
+      };
+    });
+    list.push({
+      id: 'action:new',
+      label: 'New instance',
+      detail: 'Action',
+      run: () => {
+        showCmd = false;
+        showCreateModal = true;
+      },
+    });
+    if (runningCount > 0) {
+      list.push({
+        id: 'action:stop-all',
+        label: `Stop all running (${runningCount})`,
+        detail: 'Action',
+        tone: 'warn',
+        run: handleStopAllRunning,
+      });
+    }
+    list.push({
+      id: 'action:settings',
+      label: 'Engine & Settings',
+      detail: $camoufoxVersion,
+      run: () => {
+        showCmd = false;
+        showSettingsPage.set(true);
+      },
+    });
+    return q ? list.filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(q)) : list;
+  })();
+
+  $: if (cmdActiveIndex >= cmdItems.length) {
+    cmdActiveIndex = Math.max(0, cmdItems.length - 1);
+  }
+
+  $: sortValue = `${sortField}:${sortDir}`;
+
+  function handleSortSelect(e: Event) {
+    const [field, dir] = (e.currentTarget as HTMLSelectElement).value.split(':') as [SortField, SortDir];
+    sortField = field;
+    sortDir = dir;
+    localStorage.setItem('sort_field', sortField);
+    localStorage.setItem('sort_dir', sortDir);
+  }
 
   $: allTags = ($settings.tag_definitions ?? []).map((t) => t.label);
   $: hasActiveFilters =
@@ -102,7 +162,26 @@
   function openCmd() {
     showCmd = true;
     cmdQuery = '';
+    cmdActiveIndex = 0;
     setTimeout(() => cmdInput?.focus(), 0);
+  }
+
+  function handleCmdKeydown(e: KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (cmdItems.length > 0) cmdActiveIndex = (cmdActiveIndex + 1) % cmdItems.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (cmdItems.length > 0) {
+        cmdActiveIndex = (cmdActiveIndex - 1 + cmdItems.length) % cmdItems.length;
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      cmdItems[cmdActiveIndex]?.run();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      showCmd = false;
+    }
   }
 
   onMount(() => {
@@ -366,6 +445,18 @@
         </select>
       {/if}
 
+      <select
+        class="quiet-select"
+        aria-label="Sort instances"
+        value={sortValue}
+        on:change={handleSortSelect}
+      >
+        <option value="created_at:desc">Sort: Newest</option>
+        <option value="created_at:asc">Sort: Oldest</option>
+        <option value="name:asc">Sort: Name A–Z</option>
+        <option value="name:desc">Sort: Name Z–A</option>
+      </select>
+
       <button
         class="text-toggle"
         class:active={selectMode}
@@ -403,12 +494,7 @@
           </button>
           <span>Proxy</span>
           <span>Fingerprint</span>
-          <button class="sort-head" on:click={() => toggleSort('created_at')}>
-            Data
-            {#if sortField === 'created_at'}
-              <span class="sort-mark">{sortDir === 'asc' ? '↑' : '↓'}</span>
-            {/if}
-          </button>
+          <span>Data</span>
           <span class="right">Action</span>
         </div>
 
@@ -430,62 +516,47 @@
 {/if}
 
 {#if showCmd}
-  <div class="cmd-backdrop" on:click={() => (showCmd = false)} role="presentation">
+  <div class="cmd-backdrop" on:click|self={() => (showCmd = false)} role="presentation">
     <div
       class="cmd-box"
-      on:click|stopPropagation
-      on:keydown|stopPropagation
       role="dialog"
       aria-modal="true"
+      aria-label="Quick command palette"
       tabindex="-1"
     >
       <input
         class="cmd-input"
         type="text"
+        aria-label="Search profiles and commands"
         placeholder="Jump to profile or action..."
         bind:this={cmdInput}
         bind:value={cmdQuery}
+        on:input={() => (cmdActiveIndex = 0)}
+        on:keydown={handleCmdKeydown}
       />
-      <div class="cmd-list">
-        {#each cmdMatches as inst (inst.id)}
-          {@const running = $runningInstances.has(inst.id)}
-          <button class="cmd-item" on:click={() => handleCmdToggle(inst.id)}>
-            <span>{running ? 'Stop' : 'Launch'} <strong>{inst.name}</strong></span>
-            <span class="cmd-meta mono">{inst.proxy_config?.host ?? inst.proxy ?? 'Direct'}</span>
+      <div class="cmd-list" role="listbox">
+        {#each cmdItems as item, idx (item.id)}
+          <button
+            class="cmd-item"
+            class:active={idx === cmdActiveIndex}
+            role="option"
+            aria-selected={idx === cmdActiveIndex}
+            on:mouseenter={() => (cmdActiveIndex = idx)}
+            on:click={item.run}
+          >
+            <span>{item.label}</span>
+            <span class="cmd-meta mono" class:warn={item.tone === 'warn'}>{item.detail}</span>
           </button>
         {/each}
-        <button
-          class="cmd-item"
-          on:click={() => {
-            showCmd = false;
-            showCreateModal = true;
-          }}
-        >
-          <span>New instance</span>
-          <span class="cmd-meta">Action</span>
-        </button>
-        {#if runningCount > 0}
-          <button class="cmd-item" on:click={handleStopAllRunning}>
-            <span>Stop all running ({runningCount})</span>
-            <span class="cmd-meta warn">Action</span>
-          </button>
+        {#if cmdItems.length === 0}
+          <div class="cmd-empty">No matching profiles or actions.</div>
         {/if}
-        <button
-          class="cmd-item"
-          on:click={() => {
-            showCmd = false;
-            showSettingsPage.set(true);
-          }}
-        >
-          <span>Engine & Settings</span>
-          <span class="cmd-meta mono">{$camoufoxVersion}</span>
-        </button>
       </div>
     </div>
   </div>
 {/if}
 
-<Modal show={showCreateModal} maxWidth="410px" on:close={() => (showCreateModal = false)}>
+<Modal show={showCreateModal} maxWidth="410px" ariaLabel="New instance" on:close={() => (showCreateModal = false)}>
   <div class="modal-head">
     <h3>New instance</h3>
     <button class="close-btn" aria-label="Close modal" on:click={() => (showCreateModal = false)}>
@@ -1022,9 +1093,16 @@
     text-align: left;
   }
 
-  .cmd-item:hover {
+  .cmd-item:hover,
+  .cmd-item.active {
     background: #121215;
     color: #ffffff;
+  }
+
+  .cmd-empty {
+    padding: 14px 16px;
+    font-size: 12px;
+    color: var(--text-dim);
   }
 
   .cmd-meta {

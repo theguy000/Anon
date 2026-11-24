@@ -6,6 +6,7 @@
 
   export let show = false;
   export let maxWidth = '440px';
+  export let ariaLabel = 'Dialog';
 
   function close() {
     dispatch('close');
@@ -13,10 +14,6 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && show) close();
-  }
-
-  function handleBackdropKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === ' ') close();
   }
 </script>
 
@@ -26,18 +23,16 @@
   <div
     class="modal-backdrop"
     transition:fade={{ duration: 150 }}
-    on:click={close}
-    on:keydown={handleBackdropKeydown}
+    on:click|self={close}
     role="presentation"
   >
     <div
       class="modal"
       style="max-width: {maxWidth}"
       transition:scale={{ duration: 150, start: 0.985, opacity: 0 }}
-      on:click|stopPropagation
-      on:keydown|stopPropagation
       role="dialog"
       aria-modal="true"
+      aria-label={ariaLabel}
       tabindex="-1"
     >
       <slot />

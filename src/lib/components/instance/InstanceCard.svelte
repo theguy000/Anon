@@ -395,7 +395,7 @@
       </div>
     {/if}
 
-    <div class="col-name">
+    <div class="col-name" role="cell" on:dblclick|stopPropagation={startEdit}>
       {#if editing}
         <div class="rename-wrap" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
           <input
@@ -412,11 +412,7 @@
           {/if}
         </div>
       {:else}
-        <span
-          class="name"
-          on:dblclick|stopPropagation={startEdit}
-          title={isRunning ? instance.name : 'Double-click to rename'}
-        >
+        <span class="name" title={isRunning ? instance.name : 'Double-click to rename'}>
           {instance.name}
         </span>
       {/if}

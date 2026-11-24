@@ -9,6 +9,7 @@
   <button
     class="section-header"
     type="button"
+    aria-expanded={open}
     on:click={() => (open = !open)}
     data-tooltip={titleTooltip || undefined}
   >

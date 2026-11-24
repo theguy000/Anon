@@ -5,6 +5,7 @@
 
   let newTagLabel = '';
   let newTagColor = '#737373';
+  let tagError = '';
 
   const TAG_COLORS = [
     '#e06c6c',
@@ -22,7 +23,11 @@
   function addTag() {
     const label = newTagLabel.trim();
     if (!label) return;
-    if (tags.some((t) => t.label.toLowerCase() === label.toLowerCase())) return;
+    if (tags.some((t) => t.label.toLowerCase() === label.toLowerCase())) {
+      tagError = `Tag "${label}" already exists`;
+      return;
+    }
+    tagError = '';
     settings.tag_definitions = [...tags, { label, color: newTagColor }];
     newTagLabel = '';
     newTagColor = '#737373';
@@ -94,14 +99,19 @@
       <input
         type="text"
         class="input-field"
+        aria-label="New tag name"
         placeholder="New tag name"
         bind:value={newTagLabel}
+        on:input={() => (tagError = '')}
         on:keydown={handleKeydown}
       />
       <button type="button" class="btn btn-sm" on:click={addTag} disabled={!newTagLabel.trim()}>
         Add
       </button>
     </div>
+    {#if tagError}
+      <span class="tag-error">{tagError}</span>
+    {/if}
   </div>
 </div>
 
@@ -197,5 +207,10 @@
 
   .add-tag-input-row .input-field {
     flex: 1;
+  }
+
+  .tag-error {
+    font-size: 11px;
+    color: var(--accent-danger);
   }
 </style>
