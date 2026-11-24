@@ -417,7 +417,7 @@
         </div>
         {#if availableTags.length > 0}
           <div class="tags-field">
-            <label>TAGS</label>
+            <span class="field-section-label">Tags</span>
             <div class="tags-selector">
               {#each availableTags as tagDef}
                 <button

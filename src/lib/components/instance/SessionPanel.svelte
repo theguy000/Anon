@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import { getSessionInfo, clearSessionData, runningInstances } from '$lib/store';
   import type { SessionInfo } from '$lib/store';
   import Modal from '$lib/components/ui/Modal.svelte';
@@ -24,7 +24,7 @@
     loading = true;
     try {
       sessionInfo = await getSessionInfo(instanceId);
-    } catch (e) {
+    } catch {
       sessionInfo = null;
     } finally {
       loading = false;
@@ -43,8 +43,8 @@
       await clearSessionData(instanceId, ['all']);
       showClearConfirm = false;
       await loadInfo();
-    } catch (e) {
-      // Error toasted in store
+    } catch {
+      // Toasted in store
     }
   }
 
@@ -52,8 +52,8 @@
     try {
       await clearSessionData(instanceId, [type]);
       await loadInfo();
-    } catch (e) {
-      // Error toasted in store
+    } catch {
+      // Toasted in store
     }
   }
 
@@ -62,107 +62,108 @@
   }
 </script>
 
-<Modal {show} on:close={handleClose} maxWidth="480px">
+<Modal {show} on:close={handleClose} maxWidth="440px">
   <div class="session-panel">
     <div class="sp-header">
-      <h3>SESSION DATA</h3>
-      <button class="close-btn" aria-label="Close" on:click={handleClose}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <h3>Session data</h3>
+      <button class="close-btn" aria-label="Close" on:click={handleClose}>×</button>
     </div>
 
     {#if isRunning}
-      <div class="sp-warning">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <span>STOP INSTANCE TO MANAGE DATA</span>
-      </div>
+      <div class="sp-warning">Stop this instance to manage its session files.</div>
     {:else if loading}
-      <div class="sp-loading">LOADING...</div>
+      <div class="sp-loading">Loading…</div>
     {:else if sessionInfo}
       <div class="sp-body">
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">PROFILE SIZE</span>
-            <span class="data-value">{formatBytes(sessionInfo.profile_size_bytes)}</span>
+            <span class="data-label">Profile size</span>
+            <span class="data-value mono">{formatBytes(sessionInfo.profile_size_bytes)}</span>
           </div>
         </div>
 
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">COOKIES</span>
-            <span class="data-value">{sessionInfo.cookies_exists ? 'EXISTS' : 'NONE'}</span>
+            <span class="data-label">Cookies</span>
+            <span class="data-value">{sessionInfo.cookies_exists ? 'Present' : 'Empty'}</span>
           </div>
           {#if sessionInfo.cookies_exists}
-            <button class="btn btn-sm btn-danger" on:click={() => clearType('cookies')}>CLEAR</button>
+            <button class="btn btn-sm btn-danger" on:click={() => clearType('cookies')}>Clear</button>
           {/if}
         </div>
 
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">LOCAL STORAGE</span>
-            <span class="data-value">{sessionInfo.local_storage_size != null ? formatBytes(sessionInfo.local_storage_size) : 'NONE'}</span>
+            <span class="data-label">Local storage</span>
+            <span class="data-value mono">
+              {sessionInfo.local_storage_size != null ? formatBytes(sessionInfo.local_storage_size) : 'Empty'}
+            </span>
           </div>
           {#if sessionInfo.local_storage_size != null}
-            <button class="btn btn-sm btn-danger" on:click={() => clearType('localStorage')}>CLEAR</button>
+            <button class="btn btn-sm btn-danger" on:click={() => clearType('localStorage')}>Clear</button>
           {/if}
         </div>
 
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">CACHE</span>
-            <span class="data-value">{sessionInfo.cache_size != null ? formatBytes(sessionInfo.cache_size) : 'NONE'}</span>
+            <span class="data-label">Cache</span>
+            <span class="data-value mono">
+              {sessionInfo.cache_size != null ? formatBytes(sessionInfo.cache_size) : 'Empty'}
+            </span>
           </div>
           {#if sessionInfo.cache_size != null}
-            <button class="btn btn-sm btn-danger" on:click={() => clearType('cache')}>CLEAR</button>
+            <button class="btn btn-sm btn-danger" on:click={() => clearType('cache')}>Clear</button>
           {/if}
         </div>
 
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">SESSION STORE</span>
-            <span class="data-value">{sessionInfo.session_store_exists ? 'EXISTS' : 'NONE'}</span>
+            <span class="data-label">Session store</span>
+            <span class="data-value">{sessionInfo.session_store_exists ? 'Present' : 'Empty'}</span>
           </div>
           {#if sessionInfo.session_store_exists}
-            <button class="btn btn-sm btn-danger" on:click={() => clearType('sessions')}>CLEAR</button>
+            <button class="btn btn-sm btn-danger" on:click={() => clearType('sessions')}>Clear</button>
           {/if}
         </div>
 
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">HISTORY</span>
-            <span class="data-value">{sessionInfo.has_history ? 'EXISTS' : 'NONE'}</span>
+            <span class="data-label">History</span>
+            <span class="data-value">{sessionInfo.has_history ? 'Present' : 'Empty'}</span>
           </div>
           {#if sessionInfo.has_history}
-            <button class="btn btn-sm btn-danger" on:click={() => clearType('history')}>CLEAR</button>
+            <button class="btn btn-sm btn-danger" on:click={() => clearType('history')}>Clear</button>
           {/if}
         </div>
       </div>
 
       <div class="sp-footer">
-        <button class="btn btn-danger" on:click={() => showClearConfirm = true}>CLEAR ALL DATA</button>
-        <button class="btn" on:click={loadInfo}>REFRESH</button>
+        <button class="btn btn-sm" on:click={loadInfo}>Refresh</button>
+        <button class="btn btn-sm btn-danger" on:click={() => (showClearConfirm = true)}>
+          Clear all data
+        </button>
       </div>
     {:else}
-      <div class="sp-loading">NO DATA AVAILABLE</div>
+      <div class="sp-loading">No session data available.</div>
     {/if}
   </div>
 </Modal>
 
 <ConfirmationModal
   show={showClearConfirm}
-  title="CLEAR ALL DATA?"
-  message="THIS WILL DELETE ALL COOKIES, STORAGE, CACHE, SESSIONS, AND HISTORY FOR THIS INSTANCE."
-  confirmText="CLEAR ALL"
+  title="Clear all session data"
+  message="Delete all cookies, local storage, cache, sessions, and history for this instance?"
+  confirmText="Clear all"
   danger={true}
   on:confirm={handleClearAll}
-  on:cancel={() => showClearConfirm = false}
+  on:cancel={() => (showClearConfirm = false)}
 />
 
 <style>
   .session-panel {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 16px;
   }
 
   .sp-header {
@@ -173,55 +174,41 @@
 
   .sp-header h3 {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
+    font-size: 14.5px;
+    font-weight: 500;
   }
 
-  .close-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-  }
-
-  .close-btn:hover {
-    color: var(--text-main);
+  .sp-header .close-btn {
+    font-size: 18px;
+    line-height: 1;
   }
 
   .sp-warning {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    border: 1px solid var(--accent-warning);
+    padding: 10px 12px;
+    border: 1px solid rgba(229, 154, 56, 0.4);
+    border-radius: var(--radius);
     color: var(--accent-warning);
-    font-size: 0.7rem;
-    letter-spacing: 0.05em;
+    font-size: 12.5px;
   }
 
   .sp-loading {
     text-align: center;
+    padding: 24px 0;
     color: var(--text-muted);
-    font-size: 0.75rem;
-    letter-spacing: 0.1em;
-    padding: 2rem;
+    font-size: 12.5px;
   }
 
   .sp-body {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
   }
 
   .data-row {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    padding: 0.6rem 0;
-    border-bottom: 1px solid var(--panel-border);
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--hairline);
   }
 
   .data-row:last-child {
@@ -231,30 +218,24 @@
   .data-info {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 2px;
   }
 
   .data-label {
-    font-size: 0.6rem;
+    font-size: 11.5px;
     color: var(--text-muted);
-    letter-spacing: 0.1em;
   }
 
   .data-value {
-    font-size: 0.75rem;
+    font-size: 12.5px;
     color: var(--text-main);
-    letter-spacing: 0.05em;
-    font-family: "SF Mono", "Fira Code", "Roboto Mono", monospace;
-  }
-
-  .btn-sm {
-    padding: 0.25rem 0.6rem;
-    font-size: 0.6rem;
   }
 
   .sp-footer {
     display: flex;
-    gap: 0.75rem;
-    justify-content: space-between;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--hairline);
   }
 </style>
