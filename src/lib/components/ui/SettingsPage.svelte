@@ -15,7 +15,6 @@
   } from '$lib/store';
   import type { AppSettings } from '$lib/store';
   import TagManager from './TagManager.svelte';
-  import SettingsSection from '$lib/components/instance/SettingsSection.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -23,9 +22,13 @@
 
   let localSettings: AppSettings;
   let importFileInput: HTMLInputElement;
+  let wasOpen = false;
 
-  $: if (show) {
-    localSettings = { ...$settings };
+  $: {
+    if (show && !wasOpen) {
+      localSettings = { ...$settings };
+    }
+    wasOpen = show;
   }
 
   function handleClose() {
@@ -33,7 +36,12 @@
   }
 
   async function handleSave() {
-    await updateSettings(localSettings);
+    const trimmedPath = localSettings.camoufox_path?.trim();
+    const payload: AppSettings = {
+      ...localSettings,
+      camoufox_path: trimmedPath ? trimmedPath : null,
+    };
+    await updateSettings(payload);
     await loadSettings();
     addToast('Settings saved', 'success');
     dispatch('close');
@@ -106,133 +114,170 @@
 
       <div class="sp-body">
         {#if localSettings}
-          <SettingsSection title="Engine & About" open={true}>
-            <div class="about-info">
-              <div class="about-row about-engine-row">
-                <div class="about-col">
-                  <span class="about-label">Camoufox engine</span>
-                  <span class="about-value mono">{$camoufoxVersion}</span>
+          <section class="sp-group">
+            <h4 class="sp-group-title">Engine</h4>
+
+            <div class="sp-row">
+              <div class="sp-row-label">
+                <span>Camoufox</span>
+                <span class="sp-inline-val mono">{$camoufoxVersion}</span>
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm"
+                disabled={$engineUpdating}
+                on:click={updateCamoufox}
+              >
+                {$engineUpdating ? 'Updating…' : 'Check for updates'}
+              </button>
+            </div>
+
+            {#if $engineUpdateProgress}
+              <div class="engine-progress" aria-live="polite">
+                <div class="engine-progress-row">
+                  <span class="engine-progress-status">{$engineUpdateProgress.status}</span>
+                  <span class="engine-progress-pct mono">{$engineUpdateProgress.progress}%</span>
                 </div>
-                <button
-                  class="btn btn-sm"
-                  disabled={$engineUpdating}
-                  on:click={updateCamoufox}
+                <div class="engine-progress-track">
+                  <div
+                    class="engine-progress-fill"
+                    style="width: {$engineUpdateProgress.progress}%"
+                  ></div>
+                </div>
+                {#if $engineUpdateProgress.downloaded !== undefined}
+                  <div class="engine-progress-bytes mono">
+                    {fmtBytes($engineUpdateProgress.downloaded)}
+                    {#if $engineUpdateProgress.total}&nbsp;of {fmtBytes($engineUpdateProgress.total)}{/if}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
+            <div class="sp-row">
+              <label class="sp-row-label" for="camoufox-path">Binary path</label>
+              <div class="sp-control-wide">
+                <input
+                  type="text"
+                  id="camoufox-path"
+                  class="input-field mono"
+                  placeholder="Auto-detected"
+                  bind:value={localSettings.camoufox_path}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section class="sp-group">
+            <h4 class="sp-group-title">List &amp; confirmations</h4>
+
+            <div class="sp-row">
+              <label class="sp-row-label" for="default-sort">Default sort</label>
+              <div class="sp-control-pair">
+                <select
+                  id="default-sort"
+                  class="input-field"
+                  aria-label="Default sort field"
+                  value={localSettings.default_sort_field ?? 'created_at'}
+                  on:change={(e) => {
+                    localSettings = {
+                      ...localSettings,
+                      default_sort_field: (e.target as HTMLSelectElement).value,
+                    };
+                  }}
                 >
-                  {$engineUpdating ? 'Updating…' : 'Update engine'}
-                </button>
-              </div>
-              {#if $engineUpdateProgress}
-                <div class="engine-progress" aria-live="polite">
-                  <div class="engine-progress-row">
-                    <span class="engine-progress-status">{$engineUpdateProgress.status}</span>
-                    <span class="engine-progress-pct mono">{$engineUpdateProgress.progress}%</span>
-                  </div>
-                  <div class="engine-progress-track">
-                    <div
-                      class="engine-progress-fill"
-                      style="width: {$engineUpdateProgress.progress}%"
-                    ></div>
-                  </div>
-                  {#if $engineUpdateProgress.downloaded !== undefined}
-                    <div class="engine-progress-bytes mono">
-                      {fmtBytes($engineUpdateProgress.downloaded)}
-                      {#if $engineUpdateProgress.total}&nbsp;of {fmtBytes($engineUpdateProgress.total)}{/if}
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-              <div class="about-row">
-                <span class="about-label">App</span>
-                <span class="about-value mono">Anon 0.1.2</span>
-              </div>
-            </div>
-          </SettingsSection>
-
-          <SettingsSection title="General">
-            <div class="field-row">
-              <div class="field">
-                <label for="default-sort">Default sort</label>
-                <select id="default-sort" class="input-field" bind:value={localSettings.default_sort_field}>
-                  <option value={null}>Created date</option>
-                  <option value="name">Name</option>
                   <option value="created_at">Created</option>
+                  <option value="name">Name</option>
                 </select>
-              </div>
-              <div class="field">
-                <label for="sort-dir">Sort direction</label>
-                <select id="sort-dir" class="input-field" bind:value={localSettings.default_sort_dir}>
-                  <option value={null}>Default</option>
-                  <option value="asc">Ascending</option>
+                <select
+                  id="sort-dir"
+                  class="input-field"
+                  aria-label="Default sort direction"
+                  value={localSettings.default_sort_dir ?? 'desc'}
+                  on:change={(e) => {
+                    localSettings = {
+                      ...localSettings,
+                      default_sort_dir: (e.target as HTMLSelectElement).value,
+                    };
+                  }}
+                >
                   <option value="desc">Descending</option>
+                  <option value="asc">Ascending</option>
                 </select>
               </div>
             </div>
-          </SettingsSection>
 
-          <SettingsSection title="Confirmations">
-            <div class="toggle-row">
-              <div class="toggle-info">
-                <span class="toggle-label">Skip wipe confirmation</span>
-                <span class="toggle-desc">Don't prompt when disabling data retention</span>
-              </div>
+            <div class="sp-row">
+              <label class="sp-row-label" for="confirm-wipe">Confirm before wiping data</label>
               <label class="switch">
-                <input type="checkbox" bind:checked={localSettings.skip_wipe_confirmation} />
+                <input
+                  id="confirm-wipe"
+                  type="checkbox"
+                  checked={!localSettings.skip_wipe_confirmation}
+                  on:change={(e) => {
+                    localSettings = {
+                      ...localSettings,
+                      skip_wipe_confirmation: !(e.target as HTMLInputElement).checked,
+                    };
+                  }}
+                />
                 <span class="slider"></span>
               </label>
             </div>
-            <div class="toggle-row">
-              <div class="toggle-info">
-                <span class="toggle-label">Skip delete confirmation</span>
-                <span class="toggle-desc">Don't prompt when deleting instances</span>
-              </div>
+
+            <div class="sp-row">
+              <label class="sp-row-label" for="confirm-delete">Confirm before deleting</label>
               <label class="switch">
-                <input type="checkbox" bind:checked={localSettings.skip_delete_confirmation} />
+                <input
+                  id="confirm-delete"
+                  type="checkbox"
+                  checked={!localSettings.skip_delete_confirmation}
+                  on:change={(e) => {
+                    localSettings = {
+                      ...localSettings,
+                      skip_delete_confirmation: !(e.target as HTMLInputElement).checked,
+                    };
+                  }}
+                />
                 <span class="slider"></span>
               </label>
             </div>
-          </SettingsSection>
+          </section>
 
-          <SettingsSection title="Tags">
+          <section class="sp-group">
+            <h4 class="sp-group-title">Tags</h4>
             <TagManager bind:settings={localSettings} />
-          </SettingsSection>
+          </section>
 
-          <SettingsSection title="Paths">
-            <div class="field">
-              <label for="camoufox-path">Camoufox binary path</label>
-              <input
-                type="text"
-                id="camoufox-path"
-                class="input-field mono"
-                placeholder="Auto-detected"
-                bind:value={localSettings.camoufox_path}
-              />
-              <span class="field-hint">Leave empty for automatic detection</span>
+          <section class="sp-group">
+            <h4 class="sp-group-title">Backup</h4>
+            <div class="sp-row">
+              <span class="sp-row-label">Profile backup</span>
+              <div class="data-actions">
+                <button type="button" class="btn btn-sm" on:click={handleExportAll}>
+                  Export JSON
+                </button>
+                <button type="button" class="btn btn-sm" on:click={handleImportClick}>
+                  Import JSON
+                </button>
+                <input
+                  type="file"
+                  accept=".json"
+                  bind:this={importFileInput}
+                  on:change={handleImportFile}
+                  style="display: none;"
+                />
+              </div>
             </div>
-          </SettingsSection>
-
-          <SettingsSection title="Backup & Restore">
-            <div class="data-actions">
-              <button type="button" class="btn btn-sm" on:click={handleExportAll}>
-                Export all
-              </button>
-              <button type="button" class="btn btn-sm" on:click={handleImportClick}>
-                Import JSON
-              </button>
-              <input
-                type="file"
-                accept=".json"
-                bind:this={importFileInput}
-                on:change={handleImportFile}
-                style="display: none;"
-              />
-            </div>
-          </SettingsSection>
+          </section>
         {/if}
       </div>
 
       <div class="sp-footer">
-        <button class="btn btn-sm" on:click={handleClose}>Cancel</button>
-        <button class="btn btn-primary btn-sm" on:click={handleSave}>Save</button>
+        <span class="sp-version mono">Anon 0.1.2</span>
+        <div class="sp-footer-actions">
+          <button type="button" class="btn btn-sm" on:click={handleClose}>Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" on:click={handleSave}>Save</button>
+        </div>
       </div>
     </div>
   </div>
@@ -242,7 +287,7 @@
   .settings-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.78);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
@@ -252,12 +297,12 @@
 
   .settings-panel {
     width: calc(100% - 2rem);
-    max-width: 520px;
+    max-width: 540px;
     max-height: 84vh;
     display: flex;
     flex-direction: column;
     background: var(--panel-bg);
-    border: 1px solid #2b2b30;
+    border: 1px solid var(--panel-border);
     border-radius: var(--radius);
   }
 
@@ -265,15 +310,16 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px 20px;
+    padding: 15px 20px;
     border-bottom: 1px solid var(--hairline);
     flex-shrink: 0;
   }
 
   .sp-header h3 {
     margin: 0;
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 500;
+    color: var(--text-main);
   }
 
   .sp-header .close-btn {
@@ -284,62 +330,70 @@
   .sp-body {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 20px;
+    padding: 8px 20px;
   }
 
-  .sp-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 14px 20px;
-    border-top: 1px solid var(--hairline);
-    flex-shrink: 0;
+  .sp-group {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--hairline);
   }
 
-  .field-row {
-    display: flex;
-    gap: 10px;
+  .sp-group:last-child {
+    border-bottom: none;
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    flex: 1;
-  }
-
-  .field label {
+  .sp-group-title {
+    margin: 0 0 10px 0;
     font-size: 11.5px;
+    font-weight: 500;
     color: var(--text-muted);
   }
 
-  .field-hint {
-    font-size: 11px;
-    color: var(--text-dim);
-  }
-
-  .toggle-row {
+  .sp-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 4px 0;
+    gap: 16px;
+    min-height: 36px;
   }
 
-  .toggle-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  .sp-row + .sp-row {
+    margin-top: 6px;
   }
 
-  .toggle-label {
-    font-size: 12.5px;
+  .sp-row-label {
+    font-size: 13px;
     color: var(--text-main);
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
   }
 
-  .toggle-desc {
-    font-size: 11.5px;
-    color: var(--text-dim);
+  .sp-inline-val {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .sp-control-wide {
+    width: 230px;
+    max-width: 55%;
+  }
+
+  .sp-control-wide .input-field {
+    width: 100%;
+    font-size: 12px;
+    padding: 6px 9px;
+  }
+
+  .sp-control-pair {
+    display: flex;
+    gap: 8px;
+  }
+
+  .sp-control-pair .input-field {
+    width: 114px;
+    font-size: 12.5px;
+    padding: 6px 8px;
   }
 
   .data-actions {
@@ -347,39 +401,11 @@
     gap: 8px;
   }
 
-  .about-info {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .about-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .about-col {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .about-label {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .about-value {
-    font-size: 12.5px;
-    color: var(--text-main);
-  }
-
   .engine-progress {
     display: flex;
     flex-direction: column;
     gap: 5px;
+    margin: 6px 0 8px 0;
   }
 
   .engine-progress-row {
@@ -411,13 +437,32 @@
   .engine-progress-track {
     width: 100%;
     height: 2px;
-    background: #1f1f23;
+    background: var(--hairline-strong);
     overflow: hidden;
   }
 
   .engine-progress-fill {
     height: 100%;
-    background: #ffffff;
+    background: var(--text-main);
     transition: width 0.2s ease;
+  }
+
+  .sp-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 20px;
+    border-top: 1px solid var(--hairline);
+    flex-shrink: 0;
+  }
+
+  .sp-version {
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+
+  .sp-footer-actions {
+    display: flex;
+    gap: 8px;
   }
 </style>

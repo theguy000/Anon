@@ -196,6 +196,9 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .existing-tags + .add-tag {
     padding-top: 8px;
     border-top: 1px solid var(--hairline);
   }
