@@ -94,10 +94,10 @@
     </div>
   {/if}
   <div class="toggle-item mt">
-    <label for="fp-canvas-noise">
-      Randomize canvas
-      <span class="tip" data-tip="Adds subtle noise to canvas readback and blocks WebGPU.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-canvas-noise">Randomize canvas</label>
+      <button type="button" class="tip" aria-label="Adds subtle noise to canvas readback and blocks WebGPU." data-tip="Adds subtle noise to canvas readback and blocks WebGPU.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-canvas-noise"
@@ -110,10 +110,10 @@
     </label>
   </div>
   <div class="toggle-item">
-    <label for="fp-block-webgl">
-      Disable WebGL
-      <span class="tip" data-tip="Turns off 3D graphics APIs completely.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-block-webgl">Disable WebGL</label>
+      <button type="button" class="tip" aria-label="Turns off 3D graphics APIs completely." data-tip="Turns off 3D graphics APIs completely.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-block-webgl"

@@ -264,9 +264,11 @@
       <button type="button" class="close-btn" aria-label="Close" on:click={handleClose}>×</button>
     </div>
 
-    <div class="tab-bar">
+    <div class="tab-bar" role="tablist">
       <button
         type="button"
+        role="tab"
+        aria-selected={activeTab === "fingerprint"}
         class="tab-item"
         class:tab-active={activeTab === "fingerprint"}
         on:click={() => (activeTab = "fingerprint")}
@@ -275,6 +277,8 @@
       </button>
       <button
         type="button"
+        role="tab"
+        aria-selected={activeTab === "proxy"}
         class="tab-item"
         class:tab-active={activeTab === "proxy"}
         on:click={() => (activeTab = "proxy")}
@@ -283,6 +287,8 @@
       </button>
       <button
         type="button"
+        role="tab"
+        aria-selected={activeTab === "notes"}
         class="tab-item"
         class:tab-active={activeTab === "notes"}
         on:click={() => (activeTab = "notes")}
@@ -308,7 +314,7 @@
           </div>
 
           {#if autoMode}
-            <div class="setting-row" style="margin-top: 12px;">
+            <div class="setting-row setting-row-spaced">
               <label class="setting-label" for="auto-os-select">Operating system</label>
               <div class="setting-control w210">
                 <select id="auto-os-select" class="input-field" bind:value={autoOs}>
@@ -340,13 +346,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-vary-window">
-                Vary window size each launch
-                <span
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-vary-window">Vary window size each launch</label>
+                <button
+                  type="button"
                   class="tip"
+                  aria-label="Uses a slightly different realistic window size each time you open this profile."
                   data-tip="Uses a slightly different realistic window size each time you open this profile."
-                >?</span>
-              </label>
+                >?</button>
+              </div>
               <label class="switch">
                 <input id="fp-vary-window" type="checkbox" bind:checked={autoChangeWindowSize} />
                 <span class="slider"></span>
@@ -378,10 +386,15 @@
             <h4 class="settings-group-title">Privacy &amp; blocking</h4>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-ublock">
-                uBlock Origin
-                <span class="tip" data-tip="Load the built-in ad blocker.">?</span>
-              </label>
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-ublock">uBlock Origin</label>
+                <button
+                  type="button"
+                  class="tip"
+                  aria-label="Load the built-in ad blocker."
+                  data-tip="Load the built-in ad blocker."
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-ublock"
@@ -395,10 +408,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-images">
-                Block images
-                <span class="tip" data-tip="Skip loading images to save proxy bandwidth.">?</span>
-              </label>
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-images">Block images</label>
+                <button
+                  type="button"
+                  class="tip"
+                  aria-label="Skip loading images to save proxy bandwidth."
+                  data-tip="Skip loading images to save proxy bandwidth."
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-images"
@@ -412,13 +430,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-webrtc">
-                Block WebRTC
-                <span
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-webrtc">Block WebRTC</label>
+                <button
+                  type="button"
                   class="tip"
+                  aria-label="Turns off WebRTC completely. Leave off unless a site leaks your IP."
                   data-tip="Turns off WebRTC completely. Leave off unless a site leaks your IP."
-                >?</span>
-              </label>
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-webrtc"
@@ -432,13 +452,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-ipv4">
-                IPv4 only
-                <span
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-ipv4">IPv4 only</label>
+                <button
+                  type="button"
                   class="tip"
+                  aria-label="Prevents IPv6 leaks when using an IPv4-only proxy."
                   data-tip="Prevents IPv6 leaks when using an IPv4-only proxy."
-                >?</span>
-              </label>
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-ipv4"
@@ -452,13 +474,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-canvas">
-                Randomize canvas
-                <span
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-canvas">Randomize canvas</label>
+                <button
+                  type="button"
                   class="tip"
+                  aria-label="Adds subtle noise to canvas readback and blocks WebGPU."
                   data-tip="Adds subtle noise to canvas readback and blocks WebGPU."
-                >?</span>
-              </label>
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-canvas"
@@ -472,10 +496,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-webgl">
-                Disable WebGL
-                <span class="tip" data-tip="Turns off 3D graphics APIs completely.">?</span>
-              </label>
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-webgl">Disable WebGL</label>
+                <button
+                  type="button"
+                  class="tip"
+                  aria-label="Turns off 3D graphics APIs completely."
+                  data-tip="Turns off 3D graphics APIs completely."
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-webgl"
@@ -489,13 +518,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-codecs">
-                Match OS media codecs
-                <span
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-codecs">Match OS media codecs</label>
+                <button
+                  type="button"
                   class="tip"
+                  aria-label="Align reported video codecs with the chosen operating system."
                   data-tip="Align reported video codecs with the chosen operating system."
-                >?</span>
-              </label>
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-codecs"
@@ -509,13 +540,15 @@
             </div>
 
             <div class="setting-row">
-              <label class="setting-label" for="fp-auto-coop">
-                Allow cross-origin popups
-                <span
+              <div class="setting-title-row">
+                <label class="setting-label" for="fp-auto-coop">Allow cross-origin popups</label>
+                <button
+                  type="button"
                   class="tip"
+                  aria-label="Helps with login or CAPTCHA popups that fail under strict isolation."
                   data-tip="Helps with login or CAPTCHA popups that fail under strict isolation."
-                >?</span>
-              </label>
+                >?</button>
+              </div>
               <label class="switch">
                 <input
                   id="fp-auto-coop"
@@ -627,6 +660,7 @@
                   <button
                     type="button"
                     class="tag-toggle"
+                    aria-pressed={instanceTags.includes(tagDef.label)}
                     class:tag-active={instanceTags.includes(tagDef.label)}
                     on:click={() => {
                       if (instanceTags.includes(tagDef.label)) {

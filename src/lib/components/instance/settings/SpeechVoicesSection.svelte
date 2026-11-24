@@ -28,10 +28,10 @@
     ></textarea>
   </div>
   <div class="toggle-item mt">
-    <label for="fp-voices-block">
-      Hide host voices when unset
-      <span class="tip" data-tip="Prevents your real PC's installed voices from leaking.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-voices-block">Hide host voices when unset</label>
+      <button type="button" class="tip" aria-label="Prevents your real PC's installed voices from leaking." data-tip="Prevents your real PC's installed voices from leaking.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-voices-block"

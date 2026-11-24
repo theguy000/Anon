@@ -186,6 +186,7 @@
   }
 
   .direct-note {
+    margin: 0;
     font-size: 12px;
     color: var(--text-muted);
   }

@@ -81,14 +81,14 @@
   }
 
   function clampedSetNum(
-    field: keyof FingerprintConfig,
+    field: "outer_width" | "outer_height" | "inner_width" | "inner_height",
     e: Event,
     max: number
   ): FingerprintConfig {
     fp = setNum(fp, field, e);
-    const val = (fp as Record<string, unknown>)[field];
+    const val = fp[field];
     if (typeof val === "number") {
-      (fp as Record<string, unknown>)[field] = Math.min(val, max);
+      fp[field] = Math.min(val, max);
     }
     return fp;
   }

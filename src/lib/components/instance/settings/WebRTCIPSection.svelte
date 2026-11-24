@@ -20,13 +20,10 @@
   bind:open
 >
   <div class="toggle-item">
-    <label for="fp-block-webrtc">
-      Block WebRTC
-      <span
-        class="tip"
-        data-tip="Turns off WebRTC completely. Leave off unless a site leaks your IP."
-      >?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-block-webrtc">Block WebRTC</label>
+      <button type="button" class="tip" aria-label="Turns off WebRTC completely. Leave off unless a site leaks your IP." data-tip="Turns off WebRTC completely. Leave off unless a site leaks your IP.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-block-webrtc"
@@ -39,10 +36,10 @@
     </label>
   </div>
   <div class="toggle-item">
-    <label for="fp-ipv4-only">
-      IPv4 only
-      <span class="tip" data-tip="Prevents IPv6 leaks when using an IPv4-only proxy.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-ipv4-only">IPv4 only</label>
+      <button type="button" class="tip" aria-label="Prevents IPv6 leaks when using an IPv4-only proxy." data-tip="Prevents IPv6 leaks when using an IPv4-only proxy.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-ipv4-only"

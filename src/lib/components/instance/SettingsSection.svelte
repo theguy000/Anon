@@ -28,7 +28,11 @@
 
 <style>
   .section {
-    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .section:last-child {
+    border-bottom: none;
   }
 
   .section-header {

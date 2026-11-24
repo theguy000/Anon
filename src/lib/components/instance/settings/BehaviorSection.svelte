@@ -15,10 +15,10 @@
   bind:open
 >
   <div class="toggle-item">
-    <label for="fp-enable-ublock">
-      uBlock Origin
-      <span class="tip" data-tip="Load the built-in ad blocker.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-enable-ublock">uBlock Origin</label>
+      <button type="button" class="tip" aria-label="Load the built-in ad blocker." data-tip="Load the built-in ad blocker.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-enable-ublock"
@@ -31,10 +31,10 @@
     </label>
   </div>
   <div class="toggle-item">
-    <label for="fp-block-images">
-      Block images
-      <span class="tip" data-tip="Skip loading images to save proxy bandwidth.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-block-images">Block images</label>
+      <button type="button" class="tip" aria-label="Skip loading images to save proxy bandwidth." data-tip="Skip loading images to save proxy bandwidth.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-block-images"
@@ -47,13 +47,10 @@
     </label>
   </div>
   <div class="toggle-item">
-    <label for="fp-disable-coop">
-      Allow cross-origin popups
-      <span
-        class="tip"
-        data-tip="Helps with login or CAPTCHA popups that fail under strict isolation."
-      >?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-disable-coop">Allow cross-origin popups</label>
+      <button type="button" class="tip" aria-label="Helps with login or CAPTCHA popups that fail under strict isolation." data-tip="Helps with login or CAPTCHA popups that fail under strict isolation.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-disable-coop"

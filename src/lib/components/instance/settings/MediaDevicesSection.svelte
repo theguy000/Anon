@@ -59,10 +59,10 @@
     </div>
   </div>
   <div class="toggle-item mt">
-    <label for="fp-spoof-codecs">
-      Match OS media codecs
-      <span class="tip" data-tip="Align reported video codecs with the chosen operating system.">?</span>
-    </label>
+    <div class="setting-title-row">
+      <label for="fp-spoof-codecs">Match OS media codecs</label>
+      <button type="button" class="tip" aria-label="Align reported video codecs with the chosen operating system." data-tip="Align reported video codecs with the chosen operating system.">?</button>
+    </div>
     <label class="switch">
       <input
         id="fp-spoof-codecs"

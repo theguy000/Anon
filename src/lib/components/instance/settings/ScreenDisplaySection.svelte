@@ -15,13 +15,13 @@
     (v) => v != null
   ).length;
 
-  function setNumFromSelect(field: keyof FingerprintConfig, val: string) {
-    (fp as Record<string, unknown>)[field] = val === "" ? null : Number(val);
+  function setNumFromSelect(field: "color_depth" | "pixel_depth", val: string) {
+    fp[field] = val === "" ? null : Number(val);
     fp = fp;
   }
 
-  function setFloatFromSelect(field: keyof FingerprintConfig, val: string) {
-    (fp as Record<string, unknown>)[field] = val === "" ? null : parseFloat(val);
+  function setFloatFromSelect(field: "device_pixel_ratio", val: string) {
+    fp[field] = val === "" ? null : parseFloat(val);
     fp = fp;
   }
 
