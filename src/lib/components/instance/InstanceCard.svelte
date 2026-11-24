@@ -1,52 +1,198 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { deleteInstance, launchInstance, stopInstance, isLaunching, runningInstances, togglePersistence, settings, updateSettings, renameInstance, instances, addToast } from '$lib/store';
-  import type { InstanceConfig, TagDefinition } from '$lib/store';
+  import {
+    deleteInstance,
+    launchInstance,
+    stopInstance,
+    isLaunching,
+    runningInstances,
+    togglePersistence,
+    settings,
+    updateSettings,
+    renameInstance,
+    updateInstanceNotes,
+    exportInstance,
+    testProxy,
+    getSessionInfo,
+    instances,
+  } from '$lib/store';
+  import type {
+    InstanceConfig,
+    TagDefinition,
+    ProxyConfig,
+    ProxyTestResult,
+    SessionInfo,
+  } from '$lib/store';
   import { get } from 'svelte/store';
   import ConfirmationModal from '$lib/components/instance/ConfirmationModal.svelte';
   import InstanceSettingsModal from '$lib/components/instance/InstanceSettingsModal.svelte';
+  import SessionPanel from '$lib/components/instance/SessionPanel.svelte';
 
-  const dispatch = createEventDispatcher();
+  const dispatch = createEventDispatcher<{ select: string; toggleExpand: string }>();
 
   export let instance: InstanceConfig;
-  export let compact = false;
   export let selectable = false;
   export let selected = false;
+  export let expanded = false;
 
-  // Inline rename state
+  const FP_TEST_SITES = [
+    { label: 'BrowserLeaks', url: 'https://browserleaks.com' },
+    { label: 'CreepJS', url: 'https://abrahamjuliot.github.io/creepjs/' },
+    { label: 'Iphey', url: 'https://iphey.com' },
+    { label: 'PixelScan', url: 'https://pixelscan.net' },
+  ];
+
   let editing = false;
   let editName = '';
   let editError = '';
   let editInput: HTMLInputElement;
 
-  // Launch dropdown state
-  let showLaunchDropdown = false;
-
-  let showConfirm = false;
+  let showWipeConfirm = false;
   let showDeleteConfirm = false;
   let showSettings = false;
+  let showSession = false;
+
+  let testingProxy = false;
+  let proxyTestResult: ProxyTestResult | null = null;
+
+  let sessionInfo: SessionInfo | null = null;
+  let loadingSession = false;
+  let loadedSessionFor = '';
+
+  let notesDraft = instance.notes ?? '';
+  let lastSyncedNotes = instance.notes ?? '';
+  let savingNotes = false;
+
+  $: if ((instance.notes ?? '') !== lastSyncedNotes) {
+    lastSyncedNotes = instance.notes ?? '';
+    notesDraft = lastSyncedNotes;
+  }
 
   $: isRunning = $runningInstances.has(instance.id);
   $: isCurrentlyLaunching = $isLaunching === instance.id;
   $: tagDefs = ($settings.tag_definitions ?? []) as TagDefinition[];
-  $: instanceTags = (instance.tags ?? []).map(label => {
-    const def = tagDefs.find(t => t.label === label);
-    return { label, color: def?.color ?? '#888888' };
+  $: instanceTags = (instance.tags ?? []).map((label) => {
+    const def = tagDefs.find((t) => t.label === label);
+    return { label, color: def?.color ?? '#737373' };
   });
 
-  const FP_TEST_SITES = [
-    { label: 'BROWSERLEAKS.COM', url: 'https://browserleaks.com' },
-    { label: 'CREEPJS.COM', url: 'https://abrahamjuliot.github.io/creepjs/' },
-    { label: 'IPHEY.COM', url: 'https://iphey.com' },
-    { label: 'PIXELSCAN.NET', url: 'https://pixelscan.net' },
-  ];
+  $: proxyDisplay = deriveProxyDisplay(instance);
+  $: fpSummary = deriveFingerprintSummary(instance);
+
+  $: if (expanded && loadedSessionFor !== instance.id) {
+    loadedSessionFor = instance.id;
+    loadSessionSummary();
+  }
+
+  $: if (!expanded) {
+    loadedSessionFor = '';
+  }
+
+  function deriveProxyDisplay(inst: InstanceConfig): {
+    host: string | null;
+    proto: string | null;
+    endpoint: string | null;
+    testable: ProxyConfig | null;
+  } {
+    const pc = inst.proxy_config;
+    if (pc?.proxy_type && pc.host) {
+      const endpoint = pc.port
+        ? `${pc.proxy_type}://${pc.host}:${pc.port}`
+        : `${pc.proxy_type}://${pc.host}`;
+      return {
+        host: pc.host,
+        proto: pc.proxy_type,
+        endpoint,
+        testable: pc.port ? pc : null,
+      };
+    }
+    if (inst.proxy && inst.proxy.trim()) {
+      const raw = inst.proxy.trim();
+      const m = raw.match(/^(socks5|socks4|https?):\/\/(?:[^@]+@)?([^/:]+)(?::(\d+))?/i);
+      if (m) {
+        const proto = m[1].toLowerCase().startsWith('http') ? 'http' : m[1].toLowerCase();
+        const port = m[3] ? Number(m[3]) : null;
+        return {
+          host: m[2],
+          proto,
+          endpoint: raw,
+          testable: port ? { proxy_type: proto, host: m[2], port } : null,
+        };
+      }
+      return { host: raw, proto: null, endpoint: raw, testable: null };
+    }
+    return { host: null, proto: null, endpoint: null, testable: null };
+  }
+
+  function deriveFingerprintSummary(inst: InstanceConfig): {
+    mode: string;
+    os: string;
+    detail: string;
+    sub: string;
+  } {
+    const fp = inst.fingerprint;
+    const isAuto = !fp || fp.auto_fingerprint !== false;
+    const mode = isAuto ? 'Auto' : 'Manual';
+
+    let os = '';
+    const plat = (fp?.platform ?? fp?.global_category ?? '').toLowerCase();
+    if (plat.includes('mac') || plat.includes('darwin')) os = 'macOS';
+    else if (plat.includes('linux')) os = 'Linux';
+    else if (plat.includes('win')) os = 'Windows';
+
+    const gpu = fp?.webgl_renderer ?? '';
+    const viewport =
+      fp?.screen_width && fp?.screen_height ? `${fp.screen_width} × ${fp.screen_height}` : '';
+    const tz = fp?.timezone ?? '';
+
+    const detail = isAuto
+      ? os
+        ? `Auto · ${os}`
+        : 'Auto-generated per launch'
+      : [os || 'Custom', gpu].filter(Boolean).join(' · ');
+
+    const sub = [viewport, tz].filter(Boolean).join(' · ');
+    return { mode, os, detail, sub };
+  }
+
+  function formatDate(timestamp: number): string {
+    return new Date(timestamp * 1000).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  async function loadSessionSummary() {
+    loadingSession = true;
+    try {
+      sessionInfo = await getSessionInfo(instance.id);
+    } catch {
+      sessionInfo = null;
+    } finally {
+      loadingSession = false;
+    }
+  }
+
+  function handleRowClick() {
+    if (selectable) {
+      dispatch('select', instance.id);
+    } else {
+      dispatch('toggleExpand', instance.id);
+    }
+  }
 
   function startEdit() {
     if (isRunning) return;
     editing = true;
     editName = instance.name;
     editError = '';
-    // Focus the input after it renders
     setTimeout(() => editInput?.focus(), 0);
   }
 
@@ -56,8 +202,12 @@
       editError = 'Name cannot be empty';
       return;
     }
+    if (trimmed === instance.name) {
+      editing = false;
+      return;
+    }
     const allInstances = get(instances);
-    if (allInstances.some(i => i.id !== instance.id && i.name.toLowerCase() === trimmed.toLowerCase())) {
+    if (allInstances.some((i) => i.id !== instance.id && i.name.toLowerCase() === trimmed.toLowerCase())) {
       editError = 'Name already exists';
       return;
     }
@@ -83,64 +233,51 @@
     }
   }
 
-  function handlePersistenceToggle(e: Event) {
-    const target = e.currentTarget as HTMLInputElement;
-    const checked = target.checked;
-
-    if (!checked) {
+  function handleTogglePersist() {
+    if (instance.persist_data) {
       const s = get(settings);
       if (s.skip_wipe_confirmation) {
         togglePersistence(instance.id, false);
       } else {
-        showConfirm = true;
+        showWipeConfirm = true;
       }
-      // Prevent immediate toggle visually until confirmed
-      target.checked = true;
     } else {
       togglePersistence(instance.id, true);
     }
   }
 
-  function confirmDisable(e: CustomEvent) {
+  function confirmDisablePersist(e: CustomEvent) {
     if (e.detail?.dontShowAgain) {
       updateSettings({ skip_wipe_confirmation: true });
     }
     togglePersistence(instance.id, false);
-    showConfirm = false;
-  }
-
-  function cancelDisable() {
-    showConfirm = false;
-  }
-
-  function formatDate(timestamp: number) {
-    return new Date(timestamp * 1000).toLocaleDateString();
+    showWipeConfirm = false;
   }
 
   async function handleLaunch(url?: string) {
-    showLaunchDropdown = false;
     try {
       await launchInstance(instance.id, url);
-    } catch (e) {
-      // Error already toasted in store
+    } catch {
+      // Toasted in store
     }
   }
 
   async function handleStop() {
     try {
       await stopInstance(instance.id);
-    } catch (e) {
-      // Error already toasted in store
+    } catch {
+      // Toasted in store
     }
   }
 
   async function handleDelete() {
+    if (isRunning) return;
     const s = get(settings);
     if (s.skip_delete_confirmation) {
       try {
         await deleteInstance(instance.id);
-      } catch (err) {
-        // Error already toasted in store
+      } catch {
+        // Toasted in store
       }
     } else {
       showDeleteConfirm = true;
@@ -153,712 +290,596 @@
     }
     try {
       await deleteInstance(instance.id);
-    } catch (err) {
-      // Error already toasted in store
+    } catch {
+      // Toasted in store
     }
     showDeleteConfirm = false;
   }
 
-  function cancelDelete() {
-    showDeleteConfirm = false;
-  }
-
-  function handleSelect() {
-    dispatch('select', instance.id);
-  }
-
-  function handleCardClick() {
-    if (selectable) {
-      handleSelect();
+  async function handleTestProxy() {
+    if (!proxyDisplay.testable || testingProxy) return;
+    testingProxy = true;
+    proxyTestResult = null;
+    try {
+      proxyTestResult = await testProxy(proxyDisplay.testable);
+    } catch (e) {
+      proxyTestResult = { success: false, error: String(e) };
+    } finally {
+      testingProxy = false;
     }
   }
 
-  // Close dropdown when clicking outside
-  function handleWindowClick() {
-    showLaunchDropdown = false;
+  async function handleSaveNotes() {
+    const current = instance.notes ?? '';
+    if (notesDraft === current || savingNotes) return;
+    savingNotes = true;
+    try {
+      await updateInstanceNotes(instance.id, notesDraft.trim() ? notesDraft : null);
+    } catch {
+      // Toasted in store
+    } finally {
+      savingNotes = false;
+    }
+  }
+
+  async function handleExport() {
+    try {
+      const json = await exportInstance(instance.id);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${instance.name.toLowerCase().replace(/[^a-z0-9-_]+/g, '-')}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Toasted in store
+    }
   }
 </script>
 
-<svelte:window on:click={handleWindowClick} />
-
-{#if compact}
-<div 
-  class="instance-row bento-panel" 
-  class:instance-running={isRunning}
-  class:instance-selected={selected}
-  on:click={handleCardClick}
-  on:keydown={e => e.key === 'Enter' && handleCardClick()}
-  role={selectable ? 'button' : 'article'}
-  tabindex={selectable ? 0 : -1}
->
-  {#if selectable}
-    <label class="select-checkbox" on:click|stopPropagation>
-      <input type="checkbox" checked={selected} on:change={handleSelect} />
-    </label>
-  {/if}
-  <span class="row-name">
-    <span class="status-dot" class:active={isRunning}></span>
-    {#if editing}
-      <input 
-        class="inline-edit-input"
-        class:input-error={!!editError}
-        bind:value={editName}
-        bind:this={editInput}
-        on:keydown={handleEditKeydown}
-        on:blur={cancelEdit}
-        on:click|stopPropagation
-      />
-    {:else}
-      <span 
-        class="name-text" 
-        class:editable={!isRunning}
-        on:dblclick={startEdit}
-        role="textbox"
-        tabindex="0"
-        title={isRunning ? '' : 'Double-click to rename'}
-      >
-        {instance.name.toUpperCase()}
-      </span>
-    {/if}
-    {#each instanceTags as tag}
-      <span class="tag-pill" style="border-color: {tag.color}; color: {tag.color}">{tag.label}</span>
-    {/each}
-    {#if instance.notes}
-      <span class="notes-indicator" title={instance.notes}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      </span>
-    {/if}
-  </span>
-  <span class="row-proxy">{instance.proxy || 'NONE'}</span>
-  <div class="row-setting" on:click|stopPropagation>
-    <label class="switch">
-      <input 
-        type="checkbox" 
-        checked={instance.persist_data} 
-        on:change={handlePersistenceToggle}
-      >
-      <span class="slider"></span>
-    </label>
-  </div>
-  <span class="row-date">{formatDate(instance.created_at)}</span>
-  <div class="row-actions" on:click|stopPropagation>
-    {#if isRunning}
-      <button class="btn btn-stop btn-sm" on:click={handleStop}>
-        STOP
-      </button>
-    {:else}
-      <div class="launch-group">
-        <button 
-          class="btn btn-primary btn-sm" 
-          disabled={isCurrentlyLaunching}
-          on:click={() => handleLaunch()}
-        >
-          {#if isCurrentlyLaunching}
-            <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
-          {:else}
-            LAUNCH
-          {/if}
-        </button>
-        <button 
-          class="btn btn-primary btn-sm launch-dropdown-btn"
-          disabled={isCurrentlyLaunching}
-          on:click|stopPropagation={() => showLaunchDropdown = !showLaunchDropdown}
-          aria-label="Launch options"
-        >
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
-      {#if showLaunchDropdown}
-        <div class="launch-dropdown" on:click|stopPropagation>
-          {#each FP_TEST_SITES as site}
-            <button class="dropdown-item" on:click={() => handleLaunch(site.url)}>
-              LAUNCH &rarr; {site.label}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    {/if}
-    <button 
-      class="btn btn-danger btn-sm" 
-      disabled={isRunning}
-      title={isRunning ? 'Stop the instance before deleting' : ''}
-      on:click={handleDelete}
-    >
-      DELETE
-    </button>
-    <button class="icon-btn settings-btn" aria-label="Settings" on:click={() => showSettings = true}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/><circle cx="12" cy="12" r="3" fill="var(--bg-color)" stroke="var(--bg-color)"/></svg>
-    </button>
-  </div>
-</div>
-{:else}
-<div 
-  class="instance-card bento-panel" 
-  class:instance-running={isRunning}
-  class:instance-selected={selected}
-  on:click={handleCardClick}
-  on:keydown={e => e.key === 'Enter' && handleCardClick()}
-  role={selectable ? 'button' : 'article'}
-  tabindex={selectable ? 0 : -1}
->
-  {#if selectable}
-    <label class="select-checkbox card-checkbox" on:click|stopPropagation>
-      <input type="checkbox" checked={selected} on:change={handleSelect} />
-    </label>
-  {/if}
-  <div class="card-header">
-    <div class="card-title-group">
-      <span class="status-dot" class:active={isRunning}></span>
-      {#if editing}
-        <input 
-          class="inline-edit-input"
-          class:input-error={!!editError}
-          bind:value={editName}
-          bind:this={editInput}
-          on:keydown={handleEditKeydown}
-          on:blur={cancelEdit}
-          on:click|stopPropagation
+<div class="row-group" class:expanded>
+  <div
+    class="profile-row"
+    class:selectable
+    class:running={isRunning}
+    class:selected
+    on:click={handleRowClick}
+    on:keydown={(e) => e.key === 'Enter' && handleRowClick()}
+    role="button"
+    tabindex="0"
+  >
+    {#if selectable}
+      <div class="col-chk" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+        <input
+          type="checkbox"
+          checked={selected}
+          aria-label={`Select ${instance.name}`}
+          on:change={() => dispatch('select', instance.id)}
         />
+      </div>
+    {/if}
+
+    <div class="col-name">
+      {#if editing}
+        <div class="rename-wrap" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+          <input
+            class="rename-input"
+            class:error={!!editError}
+            bind:value={editName}
+            bind:this={editInput}
+            on:keydown={handleEditKeydown}
+            on:blur={saveEdit}
+          />
+          {#if editError}
+            <span class="rename-err">{editError}</span>
+          {/if}
+        </div>
       {:else}
-        <h3 
-          class:editable={!isRunning}
-          on:dblclick={startEdit}
+        <span
+          class="name"
           role="textbox"
-          tabindex="0"
-          title={isRunning ? '' : 'Double-click to rename'}
+          tabindex="-1"
+          on:dblclick|stopPropagation={startEdit}
+          title={isRunning ? instance.name : 'Double-click to rename'}
         >
-          {instance.name.toUpperCase()}
-        </h3>
+          {instance.name}
+        </span>
+      {/if}
+
+      {#if instanceTags.length > 0}
+        <span class="tags">
+          {#each instanceTags as tag}
+            <span class="tag-item">
+              <i style="background:{tag.color}"></i>{tag.label}
+            </span>
+          {/each}
+        </span>
       {/if}
     </div>
-    <span class="date">{formatDate(instance.created_at)}</span>
+
+    <div class="col-proxy mono">
+      {#if proxyDisplay.host}
+        <span class="host" title={proxyDisplay.endpoint ?? proxyDisplay.host}>{proxyDisplay.host}</span>
+        {#if proxyDisplay.proto}
+          <span class="proto">{proxyDisplay.proto}</span>
+        {/if}
+      {:else}
+        <span class="muted">Direct</span>
+      {/if}
+    </div>
+
+    <div class="col-fp">
+      <span>{fpSummary.mode}</span>
+      {#if fpSummary.os}
+        <span class="muted">· {fpSummary.os}</span>
+      {/if}
+    </div>
+
+    <div class="col-data">
+      <span class:wipe={!instance.persist_data}>
+        {instance.persist_data ? 'Retain' : 'Wipe'}
+      </span>
+    </div>
+
+    <div class="col-action" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+      {#if isRunning}
+        <button class="row-btn stop" on:click={handleStop}>Stop</button>
+      {:else}
+        <button class="row-btn" disabled={isCurrentlyLaunching} on:click={() => handleLaunch()}>
+          {isCurrentlyLaunching ? 'Launching…' : 'Launch'}
+        </button>
+      {/if}
+    </div>
   </div>
 
-  {#if instanceTags.length > 0}
-    <div class="card-tags">
-      {#each instanceTags as tag}
-        <span class="tag-pill" style="border-color: {tag.color}; color: {tag.color}">{tag.label}</span>
-      {/each}
-    </div>
-  {/if}
-
-  {#if instance.notes}
-    <div class="card-notes" title={instance.notes}>
-      {instance.notes.length > 80 ? instance.notes.substring(0, 80) + '...' : instance.notes}
-    </div>
-  {/if}
-  
-  <div class="card-body">
-    <div class="detail">
-      <span class="label">PROXY</span>
-      <span class="value">{instance.proxy || 'NONE'}</span>
-    </div>
-    <div class="detail setting-detail" on:click|stopPropagation>
-      <div class="label-group">
-        <span class="label">RETAIN DATA</span>
-        <span class="sub-label">HISTORY, LOGINS, COOKIES</span>
-      </div>
-      <label class="switch">
-        <input 
-          type="checkbox" 
-          checked={instance.persist_data} 
-          on:change={handlePersistenceToggle}
-        >
-        <span class="slider"></span>
-      </label>
-    </div>
-  </div>
-
-  <div class="card-actions" on:click|stopPropagation>
-    {#if isRunning}
-      <button class="btn btn-stop" on:click={handleStop}>
-        STOP
-      </button>
-    {:else}
-      <div class="launch-group">
-        <button 
-          class="btn btn-primary" 
-          disabled={isCurrentlyLaunching}
-          on:click={() => handleLaunch()}
-        >
-          {#if isCurrentlyLaunching}
-            <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/></svg>
-            LAUNCHING
-          {:else}
-            LAUNCH
+  {#if expanded}
+    <div class="drawer">
+      <div class="dcol">
+        <div class="dlbl">PROXY</div>
+        {#if proxyDisplay.endpoint}
+          <div class="dval mono" title={proxyDisplay.endpoint}>{proxyDisplay.endpoint}</div>
+          {#if proxyTestResult}
+            {#if proxyTestResult.success}
+              <div class="dsub mono ok">
+                {proxyTestResult.ip ?? 'Connected'}
+                {#if proxyTestResult.city || proxyTestResult.country}
+                  · {[proxyTestResult.city, proxyTestResult.country].filter(Boolean).join(', ')}
+                {/if}
+                {#if proxyTestResult.latency_ms != null}
+                  · {proxyTestResult.latency_ms} ms
+                {/if}
+              </div>
+            {:else}
+              <div class="dsub err">{proxyTestResult.error ?? 'Proxy test failed'}</div>
+            {/if}
           {/if}
-        </button>
-        <button 
-          class="btn btn-primary launch-dropdown-btn"
-          disabled={isCurrentlyLaunching}
-          on:click|stopPropagation={() => showLaunchDropdown = !showLaunchDropdown}
-          aria-label="Launch options"
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
+          <div class="dactions">
+            {#if proxyDisplay.testable}
+              <button class="ghost-btn" disabled={testingProxy} on:click={handleTestProxy}>
+                {testingProxy ? 'Testing…' : 'Test proxy'}
+              </button>
+            {/if}
+            <button class="link-btn" on:click={() => (showSettings = true)}>Configure</button>
+          </div>
+        {:else}
+          <div class="dval muted">Direct connection</div>
+          <div class="dactions">
+            <button class="link-btn" on:click={() => (showSettings = true)}>Add proxy</button>
+          </div>
+        {/if}
       </div>
-      {#if showLaunchDropdown}
-        <div class="launch-dropdown" on:click|stopPropagation>
+
+      <div class="dcol">
+        <div class="dlbl">FINGERPRINT</div>
+        <div class="dval">{fpSummary.detail}</div>
+        {#if fpSummary.sub}
+          <div class="dsub mono">{fpSummary.sub}</div>
+        {/if}
+        <div class="dactions">
           {#each FP_TEST_SITES as site}
-            <button class="dropdown-item" on:click={() => handleLaunch(site.url)}>
-              LAUNCH &rarr; {site.label}
+            <button
+              class="link-btn"
+              disabled={isCurrentlyLaunching}
+              on:click={() => handleLaunch(site.url)}
+            >
+              {site.label}
             </button>
           {/each}
+          <button class="ghost-btn" on:click={() => (showSettings = true)}>Full settings</button>
         </div>
-      {/if}
-    {/if}
-    <button 
-      class="btn btn-danger" 
-      disabled={isRunning}
-      title={isRunning ? 'Stop the instance before deleting' : ''}
-      on:click={handleDelete}
-    >
-      DELETE
-    </button>
-    <button class="icon-btn settings-btn" aria-label="Settings" on:click={() => showSettings = true}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/><circle cx="12" cy="12" r="3" fill="var(--bg-color)" stroke="var(--bg-color)"/></svg>
-    </button>
-  </div>
-</div>
-{/if}
+      </div>
 
-<ConfirmationModal 
-  show={showConfirm}
-  title="WIPE DATA?"
-  message="TURNING OFF DATA RETENTION WILL PERMANENTLY DELETE ALL HISTORY, LOGINS, AND COOKIES FOR THIS INSTANCE."
-  confirmText="WIPE AND DISABLE"
-  danger={true}
-  showSkipToggle={true}
-  on:confirm={confirmDisable}
-  on:cancel={cancelDisable}
+      <div class="dcol">
+        <div class="dlbl">SESSION & NOTES</div>
+        <textarea
+          class="notes-input"
+          rows="2"
+          bind:value={notesDraft}
+          on:blur={handleSaveNotes}
+          placeholder="Add a note..."
+        ></textarea>
+        <div class="dactions between">
+          <span class="dsub mono">
+            {#if loadingSession}
+              Loading…
+            {:else if sessionInfo}
+              {formatBytes(sessionInfo.profile_size_bytes)} · {formatDate(instance.created_at)}
+            {:else}
+              Created {formatDate(instance.created_at)}
+            {/if}
+          </span>
+          <div class="dactions">
+            {#if notesDraft !== (instance.notes ?? '')}
+              <button class="link-btn ok" disabled={savingNotes} on:click={handleSaveNotes}>
+                Save note
+              </button>
+            {/if}
+            <button class="link-btn" on:click={handleTogglePersist}>
+              {instance.persist_data ? 'Switch to wipe' : 'Retain data'}
+            </button>
+            <button class="link-btn" on:click={() => (showSession = true)}>Session</button>
+            <button class="link-btn" on:click={handleExport}>Export</button>
+            <button class="link-btn danger" disabled={isRunning} on:click={handleDelete}>
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+</div>
+
+<InstanceSettingsModal show={showSettings} {instance} on:close={() => (showSettings = false)} />
+
+<SessionPanel
+  show={showSession}
+  instanceId={instance.id}
+  on:close={() => {
+    showSession = false;
+    if (expanded) loadSessionSummary();
+  }}
 />
 
-<ConfirmationModal 
+<ConfirmationModal
+  show={showWipeConfirm}
+  title="Disable data retention"
+  message="Turning off retention will wipe this profile's cookies, logins, and history on close."
+  confirmText="Switch to wipe"
+  danger={true}
+  showSkipToggle={true}
+  on:confirm={confirmDisablePersist}
+  on:cancel={() => (showWipeConfirm = false)}
+/>
+
+<ConfirmationModal
   show={showDeleteConfirm}
-  title="DELETE INSTANCE?"
-  message="THIS WILL PERMANENTLY DELETE THIS INSTANCE AND ALL ITS DATA. THIS ACTION CANNOT BE UNDONE."
-  confirmText="DELETE"
+  title="Delete instance"
+  message={`Permanently delete "${instance.name}" and its local browser profile?`}
+  confirmText="Delete"
   danger={true}
   showSkipToggle={true}
   on:confirm={confirmDelete}
-  on:cancel={cancelDelete}
-/>
-
-<InstanceSettingsModal
-  show={showSettings}
-  {instance}
-  on:close={() => showSettings = false}
+  on:cancel={() => (showDeleteConfirm = false)}
 />
 
 <style>
-  /* Grid card layout */
-  .instance-card {
-    padding: 2rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    transition: border-color 0.2s ease;
-    position: relative;
+  .row-group {
+    border-bottom: 1px solid #151518;
   }
 
-  .instance-card:hover {
-    border-color: var(--text-muted);
-  }
-
-  .instance-card.instance-running,
-  .instance-row.instance-running {
-    border-color: var(--accent-running);
-  }
-
-  .instance-card.instance-running:hover,
-  .instance-row.instance-running:hover {
-    border-color: var(--accent-running);
-    box-shadow: 0 0 0 1px var(--accent-running);
-  }
-
-  .instance-card.instance-selected,
-  .instance-row.instance-selected {
-    border-color: var(--text-main);
-    box-shadow: 0 0 0 1px var(--text-main);
-  }
-
-  .card-header {
-    display: flex;
-    justify-content: space-between;
+  .profile-row {
+    display: grid;
+    grid-template-columns: 1.5fr 1.4fr 1fr 84px 96px;
     align-items: center;
-    border-bottom: 1px solid var(--panel-border);
-    padding-bottom: 1rem;
+    gap: 16px;
+    padding: 0 12px;
+    min-height: 48px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background 0.12s ease;
   }
 
-  .card-title-group {
+  .profile-row.selectable {
+    grid-template-columns: 26px 1.5fr 1.4fr 1fr 84px 96px;
+  }
+
+  .profile-row:hover {
+    background: var(--surface-hover);
+  }
+
+  .profile-row.running {
+    border-left-color: #ffffff;
+    background: #060607;
+  }
+
+  .profile-row.running:hover {
+    background: #0c0c0e;
+  }
+
+  .profile-row.selected {
+    background: #0d0d10;
+  }
+
+  .col-chk {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    flex: 1;
+  }
+
+  .col-name {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
     min-width: 0;
   }
 
-  .card-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-  }
-
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background-color: var(--accent-running);
-    flex-shrink: 0;
-    opacity: 0;
-    box-shadow: none;
-  }
-
-  .status-dot.active {
-    opacity: 1;
-    box-shadow: 0 0 4px var(--accent-running);
-    animation: pulse-dot 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--accent-running); }
-    50% { opacity: 0.5; box-shadow: 0 0 2px var(--accent-running); }
-  }
-
-  .date {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
-  }
-
-  .card-body {
-    flex: 1;
-  }
-
-  .detail {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .label {
-    font-size: 0.7rem;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
-  }
-
-  .sub-label {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
-    opacity: 0.7;
-  }
-
-  .label-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-  }
-
-  .setting-detail {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--panel-border);
-  }
-
-  .value {
-    font-size: 0.85rem;
-    font-family: monospace;
-    color: var(--text-main);
-    word-break: break-all;
-  }
-
-  .card-actions {
-    display: flex;
-    gap: 1rem;
-    margin-top: 0.5rem;
-    border-top: 1px solid var(--panel-border);
-    padding-top: 1.5rem;
-    position: relative;
-  }
-
-  .card-actions button {
-    flex: 1;
-  }
-
-  .card-actions .settings-btn {
-    flex: 0;
-  }
-
-  /* List row layout */
-  .instance-row {
-    display: flex;
-    align-items: center;
-    gap: 2rem;
-    padding: 0.75rem 1.25rem;
-    transition: border-color 0.2s ease;
-    position: relative;
-  }
-
-  .instance-row:hover {
-    border-color: var(--text-muted);
-  }
-
-  .row-name {
-    font-size: 0.85rem;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    position: relative;
-    padding-left: 14px;
-    min-width: 0;
-  }
-
-  .row-name .status-dot {
-    position: absolute;
-    left: 0;
-  }
-
-  .row-setting {
-    display: flex;
-    align-items: center;
-    width: 80px;
-    justify-content: center;
-  }
-
-  .row-proxy {
-    font-size: 0.8rem;
-    font-family: monospace;
-    color: var(--text-muted);
-    width: 200px;
+  .name {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #ffffff;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .row-date {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
-    white-space: nowrap;
-    width: 100px;
-    text-align: left;
-  }
-
-  .row-actions {
+  .rename-wrap {
     display: flex;
-    gap: 0.5rem;
-    width: 240px;
-    justify-content: flex-end;
-    align-items: center;
-    position: relative;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 160px;
   }
 
-  .btn-sm {
-    padding: 0.3rem 0.75rem;
-    font-size: 0.7rem;
-  }
-
-  .btn-stop {
-    background: transparent;
-    border: 1px solid var(--accent-warning);
-    color: var(--accent-warning);
-  }
-
-  .btn-stop:hover {
-    background: var(--accent-warning);
-    color: var(--text-inverse);
-  }
-
-  .icon-btn {
-    background: none;
-    border: 1px solid var(--text-muted);
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0.3rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-  }
-
-  .icon-btn:hover {
-    border-color: var(--text-main);
-    color: var(--text-main);
-  }
-
-  /* Inline edit */
-  .inline-edit-input {
-    background: transparent;
-    border: 1px solid var(--text-main);
-    color: var(--text-main);
+  .rename-input {
+    background: #000000;
+    border: 1px solid #ffffff;
+    border-radius: var(--radius);
+    color: #ffffff;
     font-family: inherit;
-    font-size: inherit;
-    letter-spacing: 0.1em;
-    padding: 0.15rem 0.4rem;
-    margin-top: calc(-0.15rem - 1px);
-    margin-bottom: calc(-0.15rem - 1px);
-    margin-left: calc(-0.4rem - 1px);
-    margin-right: 0;
+    font-size: 13px;
+    padding: 2px 6px;
     outline: none;
-    width: 100%;
-    max-width: 200px;
-    box-sizing: content-box;
   }
 
-  .inline-edit-input.input-error {
+  .rename-input.error {
     border-color: var(--accent-danger);
   }
 
-  .name-text.editable {
-    cursor: text;
+  .rename-err {
+    font-size: 11px;
+    color: var(--accent-danger);
   }
 
-  .name-text.editable:hover {
-    text-decoration: underline;
-    text-decoration-style: dotted;
-    text-underline-offset: 3px;
-    text-decoration-color: var(--text-muted);
+  .tags {
+    display: inline-flex;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
-  h3.editable {
-    cursor: text;
+  .tag-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    color: #737373;
   }
 
-  h3.editable:hover {
-    text-decoration: underline;
-    text-decoration-style: dotted;
-    text-underline-offset: 3px;
-    text-decoration-color: var(--text-muted);
+  .tag-item i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    opacity: 0.85;
   }
 
-  /* Tags */
-  .tag-pill {
-    font-size: 0.55rem;
-    letter-spacing: 0.05em;
-    padding: 0.1rem 0.4rem;
-    border: 1px solid;
+  .col-proxy {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    min-width: 0;
+  }
+
+  .host {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
-    text-transform: uppercase;
   }
 
-  .card-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-top: -0.5rem;
-  }
-
-  /* Notes */
-  .card-notes {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    line-height: 1.4;
-    letter-spacing: 0.02em;
-    margin-top: -0.5rem;
-  }
-
-  .notes-indicator {
-    color: var(--text-muted);
-    display: flex;
-    align-items: center;
+  .proto {
+    font-size: 11px;
+    color: var(--text-dim);
     flex-shrink: 0;
   }
 
-  /* Selection checkbox */
-  .select-checkbox {
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-    flex-shrink: 0;
+  .col-fp {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .select-checkbox input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
-    accent-color: var(--text-main);
-    cursor: pointer;
-  }
-
-  .card-checkbox {
-    position: absolute;
-    top: 0.75rem;
-    right: 0.75rem;
-  }
-
-  /* Launch dropdown */
-  .launch-group {
-    display: flex;
-    flex: 1;
-  }
-
-  .launch-group .btn:first-child {
-    flex: 1;
-    border-right: none;
-  }
-
-  .launch-dropdown-btn {
-    padding: 0.3rem 0.4rem;
-    flex: 0 !important;
-  }
-
-  .launch-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: #111111;
-    border: 1px solid var(--panel-border);
-    z-index: 100;
-    display: flex;
-    flex-direction: column;
-    margin-top: 0.25rem;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
-  }
-
-  .dropdown-item {
-    background: none;
-    border: none;
-    border-bottom: 1px solid var(--panel-border);
+  .col-data {
+    font-size: 12.5px;
     color: var(--text-muted);
-    font-family: inherit;
-    font-size: 0.65rem;
-    letter-spacing: 0.05em;
-    padding: 0.6rem 0.75rem;
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.15s ease;
   }
 
-  .dropdown-item:last-child {
-    border-bottom: none;
+  .col-data .wipe {
+    color: var(--accent-warning);
   }
 
-  .dropdown-item:hover {
-    background: var(--panel-border);
+  .muted {
+    color: #737373;
+  }
+
+  .ok {
+    color: var(--accent-running);
+  }
+
+  .err {
+    color: var(--accent-danger);
+  }
+
+  .col-action {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .row-btn {
+    height: 27px;
+    min-width: 68px;
+    padding: 0 11px;
+    border-radius: var(--radius);
+    background: transparent;
+    border: 1px solid #2d2d32;
     color: var(--text-main);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.1s;
   }
 
-  /* Shared */
-  .btn:disabled {
-    opacity: 0.5;
+  .row-btn:hover:not(:disabled) {
+    background: #ffffff;
+    border-color: #ffffff;
+    color: #000000;
+  }
+
+  .row-btn.stop {
+    border-color: #a16b25;
+    color: var(--accent-warning);
+  }
+
+  .row-btn.stop:hover:not(:disabled) {
+    background: var(--accent-warning);
+    border-color: var(--accent-warning);
+    color: #000000;
+  }
+
+  .row-btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .row-btn:disabled {
+    opacity: 0.45;
     cursor: not-allowed;
   }
 
-  .spin-icon {
-    width: 14px;
-    height: 14px;
-    animation: spin 1s linear infinite;
+  .drawer {
+    display: grid;
+    grid-template-columns: 1fr 1.25fr 1.25fr;
+    gap: 24px;
+    padding: 15px 20px 17px 18px;
+    background: var(--surface-recessed);
+    border-top: 1px solid #161619;
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  .dcol {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .dlbl {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+  }
+
+  .dval {
+    font-size: 12.5px;
+    color: #e4e4e7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dsub {
+    font-size: 11.5px;
+    color: #737373;
+  }
+
+  .dactions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 2px;
+  }
+
+  .dactions.between {
+    justify-content: space-between;
+  }
+
+  .ghost-btn {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: var(--radius);
+    background: transparent;
+    border: 1px solid #2b2b30;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s;
+  }
+
+  .ghost-btn:hover:not(:disabled) {
+    border-color: #ffffff;
+    color: #ffffff;
+  }
+
+  .ghost-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .link-btn {
+    background: none;
+    border: none;
+    color: #9b9ba1;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .link-btn:hover:not(:disabled) {
+    color: #ffffff;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .link-btn.ok {
+    color: var(--accent-running);
+  }
+
+  .link-btn.danger {
+    color: var(--accent-danger);
+  }
+
+  .link-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    text-decoration: none;
+  }
+
+  .notes-input {
+    width: 100%;
+    background: #000000;
+    border: 1px solid #202024;
+    border-radius: var(--radius);
+    color: var(--text-main);
+    font-size: 12px;
+    font-family: inherit;
+    padding: 7px 9px;
+    resize: none;
+    outline: none;
+  }
+
+  .notes-input:focus {
+    border-color: #66666e;
   }
 </style>

@@ -256,6 +256,7 @@ export const settings = writable<AppSettings>({ skip_wipe_confirmation: false, s
 // ── Running instances tracking ──────────────────────────────────────────
 export const runningInstances = writable<Set<string>>(new Set());
 export const showCloseConfirm = writable<boolean>(false);
+export const showSettingsPage = writable<boolean>(false);
 
 /** Initialize event listeners for process lifecycle events. Call once on app mount.
  *  Returns a cleanup function that removes all listeners — pass it to onMount's
