@@ -1,12 +1,10 @@
-use crate::instances::get_profiles_dir;
+use crate::instances::{get_profiles_dir, ANON_INTERNAL_ENTRIES};
 use crate::process_manager;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::Path;
 use tauri::AppHandle;
-
-const ANON_INTERNAL_ENTRIES: &[&str] = &["anon_config.json", "user.js", "proxy_auth_ext"];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionInfo {

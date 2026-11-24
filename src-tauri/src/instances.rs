@@ -7,6 +7,9 @@ use tauri::{AppHandle, Emitter};
 use crate::camoufox::{get_data_dir, write_json_atomic};
 use crate::process_manager;
 
+pub(crate) const ANON_INTERNAL_ENTRIES: &[&str] =
+    &["anon_config.json", "user.js", "proxy_auth_ext"];
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct FingerprintConfig {
@@ -118,7 +121,7 @@ impl FingerprintConfig {
     pub fn auto_default() -> Self {
         Self {
             auto_fingerprint: Some(true),
-            auto_os: Some("host".to_string()),
+            auto_os: None,
             auto_change_window_size: Some(true),
             identity_nonce: Some(0),
             ..Self::default()
@@ -606,22 +609,8 @@ pub(crate) fn resolve_effective_proxy(
     legacy_proxy.as_deref().and_then(parse_legacy_proxy_string)
 }
 
-fn format_legacy_proxy(pc: &ProxyConfig) -> Option<String> {
-    let ptype = pc.proxy_type.as_deref()?;
-    let host = pc.host.as_deref()?;
-    let port = pc.port?;
-    if host.is_empty() || port == 0 {
-        return None;
-    }
-    match (pc.username.as_deref(), pc.password.as_deref()) {
-        (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
-            Some(format!("{}://{}:{}@{}:{}", ptype, user, pass, host, port))
-        }
-        (Some(user), _) if !user.is_empty() => {
-            Some(format!("{}://{}@{}:{}", ptype, user, host, port))
-        }
-        _ => Some(format!("{}://{}:{}", ptype, host, port)),
-    }
+pub(crate) fn format_legacy_proxy(pc: &ProxyConfig) -> Option<String> {
+    crate::proxy_tester::proxy_url(pc).ok()
 }
 
 fn push_user_pref(out: &mut String, key: &str, value: &serde_json::Value) {
@@ -966,7 +955,7 @@ pub(crate) fn cleanup_instance_data(instance_dir: &Path) -> io::Result<()> {
         let file_name = path.file_name().and_then(|n| n.to_str());
 
         if let Some(name) = file_name {
-            if name == "anon_config.json" || name == "user.js" || name == "proxy_auth_ext" {
+            if ANON_INTERNAL_ENTRIES.contains(&name) {
                 continue;
             }
         }
@@ -1039,6 +1028,47 @@ pub async fn list_instances(app: &AppHandle) -> Result<Vec<InstanceConfig>, Stri
     Ok(instances)
 }
 
+pub(crate) fn build_new_instance_config(
+    id: String,
+    name: String,
+    proxy: Option<String>,
+    persist_data: bool,
+    app_settings: &crate::settings::AppSettings,
+) -> InstanceConfig {
+    let parsed_proxy = proxy.as_deref().and_then(parse_legacy_proxy_string);
+    let initial_proxy_config = parsed_proxy.or_else(|| app_settings.default_proxy_template.clone());
+    let initial_proxy_str = initial_proxy_config
+        .as_ref()
+        .and_then(format_legacy_proxy)
+        .or_else(|| proxy.filter(|s| !s.trim().is_empty()));
+
+    InstanceConfig {
+        id,
+        name,
+        proxy: initial_proxy_str,
+        persist_data,
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
+        fingerprint: Some(
+            app_settings
+                .default_fingerprint_template
+                .clone()
+                .unwrap_or_else(FingerprintConfig::auto_default),
+        ),
+        proxy_config: initial_proxy_config,
+        tags: None,
+        notes: None,
+        proxy_pool: None,
+        proxy_rotation_mode: None,
+        proxy_rotation_index: None,
+        fingerprint_pool: None,
+        fingerprint_rotation_mode: None,
+        fingerprint_rotation_index: None,
+    }
+}
+
 pub async fn create_instance(
     app: &AppHandle,
     name: String,
@@ -1057,50 +1087,53 @@ pub async fn create_instance(
     let instance_dir = profiles_dir.join(&id);
     fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
 
-    let parsed_proxy = proxy.as_deref().and_then(parse_legacy_proxy_string);
-    let initial_proxy_config = parsed_proxy.or(app_settings.default_proxy_template);
-    let initial_proxy_str = proxy
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| initial_proxy_config.as_ref().and_then(format_legacy_proxy));
-
-    let config = InstanceConfig {
-        id: id.clone(),
-        name,
-        proxy: initial_proxy_str,
-        persist_data,
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
-        fingerprint: Some(
-            app_settings
-                .default_fingerprint_template
-                .unwrap_or_else(FingerprintConfig::auto_default),
-        ),
-        proxy_config: initial_proxy_config,
-        tags: None,
-        notes: None,
-        proxy_pool: None,
-        proxy_rotation_mode: None,
-        proxy_rotation_index: None,
-        fingerprint_pool: None,
-        fingerprint_rotation_mode: None,
-        fingerprint_rotation_index: None,
-    };
+    let config = build_new_instance_config(id, name, proxy, persist_data, &app_settings);
 
     let config_path = instance_dir.join("anon_config.json");
     write_json_atomic(&config_path, &config)?;
 
     let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
+    let block_webrtc = config
+        .fingerprint
+        .as_ref()
+        .is_some_and(|f| f.block_webrtc == Some(true));
     ensure_user_js(
         &instance_dir,
         resolved_proxy.as_ref(),
         config.persist_data,
-        false,
+        block_webrtc,
     )
     .map_err(|e| format!("Failed to write user.js: {}", e))?;
 
     Ok(config)
+}
+
+pub(crate) fn select_proxy_for_launch(
+    config: Option<&InstanceConfig>,
+) -> (Option<ProxyConfig>, Option<usize>) {
+    if let Some(pool) = config.and_then(|c| c.proxy_pool.as_ref()) {
+        if !pool.is_empty() {
+            let mode = config
+                .and_then(|c| c.proxy_rotation_mode.as_deref())
+                .unwrap_or("sequential");
+            return if mode == "random" {
+                use rand::Rng;
+                let idx = rand::thread_rng().gen_range(0..pool.len());
+                (Some(pool[idx].clone()), None)
+            } else {
+                let current = config.and_then(|c| c.proxy_rotation_index).unwrap_or(0);
+                let idx = current % pool.len();
+                (Some(pool[idx].clone()), Some(idx + 1))
+            };
+        }
+    }
+    (
+        resolve_effective_proxy(
+            &config.and_then(|c| c.proxy_config.clone()),
+            &config.and_then(|c| c.proxy.clone()),
+        ),
+        None,
+    )
 }
 
 pub async fn delete_instance(app: &AppHandle, id: String) -> Result<(), String> {
@@ -1147,44 +1180,35 @@ pub async fn launch_instance(
             .map_err(|e| format!("Failed to wipe ephemeral profile before launch: {}", e))?;
     }
 
-    // Resolve one canonical proxy for geo lookup, routing, and authentication.
-    let effective_proxy_config: Option<ProxyConfig> =
-        if let Some(pool) = config.as_ref().and_then(|c| c.proxy_pool.as_ref()) {
-            if !pool.is_empty() {
-                let mode = config
-                    .as_ref()
-                    .and_then(|c| c.proxy_rotation_mode.as_deref())
-                    .unwrap_or("sequential");
-                let idx = if mode == "random" {
-                    use rand::Rng;
-                    rand::thread_rng().gen_range(0..pool.len())
-                } else {
-                    let current = config
-                        .as_ref()
-                        .and_then(|c| c.proxy_rotation_index)
-                        .unwrap_or(0);
-                    let idx = current % pool.len();
-                    if let Ok(contents) = fs::read_to_string(&config_path) {
-                        if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
-                            cfg.proxy_rotation_index = Some(idx + 1);
-                            let _ = write_json_atomic(&config_path, &cfg);
-                        }
-                    }
-                    idx
-                };
-                Some(pool[idx].clone())
-            } else {
-                resolve_effective_proxy(
-                    &config.as_ref().and_then(|c| c.proxy_config.clone()),
-                    &config.as_ref().and_then(|c| c.proxy.clone()),
-                )
+    struct RelayGuard {
+        id: String,
+        active: bool,
+    }
+    impl Drop for RelayGuard {
+        fn drop(&mut self) {
+            if self.active {
+                crate::socks5_relay::stop_for_instance(&self.id);
             }
-        } else {
-            resolve_effective_proxy(
-                &config.as_ref().and_then(|c| c.proxy_config.clone()),
-                &config.as_ref().and_then(|c| c.proxy.clone()),
-            )
-        };
+        }
+    }
+    let mut relay_guard = RelayGuard {
+        id: id.clone(),
+        active: false,
+    };
+
+    let bin_path = crate::camoufox::get_camoufox_binary(app)
+        .await
+        .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
+
+    let (effective_proxy_config, next_proxy_idx) = select_proxy_for_launch(config.as_ref());
+    if let Some(next_idx) = next_proxy_idx {
+        if let Ok(contents) = fs::read_to_string(&config_path) {
+            if let Ok(mut cfg) = serde_json::from_str::<InstanceConfig>(&contents) {
+                cfg.proxy_rotation_index = Some(next_idx);
+                let _ = write_json_atomic(&config_path, &cfg);
+            }
+        }
+    }
 
     // For authenticated SOCKS5 proxies, route Firefox through a per-instance loopback relay
     // that handles RFC 1929 upstream auth (Firefox WebExtensions only auth HTTP proxies).
@@ -1205,6 +1229,7 @@ pub async fn launch_instance(
                 password,
             )
             .await?;
+            relay_guard.active = true;
             browser_proxy_config = Some(ProxyConfig {
                 proxy_type: Some("socks5".to_string()),
                 host: Some("127.0.0.1".to_string()),
@@ -1214,10 +1239,6 @@ pub async fn launch_instance(
             });
         }
     }
-
-    let bin_path = crate::camoufox::get_camoufox_binary(app)
-        .await
-        .ok_or_else(|| "Camoufox binary not downloaded".to_string())?;
 
     let default_fp = FingerprintConfig::auto_default();
     let effective_fp: &FingerprintConfig =
@@ -1286,7 +1307,6 @@ pub async fn launch_instance(
             target_ff_version: Some(target_ff_ver),
             identity_seed: crate::geo::identity_seed(&id, nonce),
             block_webrtc,
-            network_ipv4_only: effective_fp.network_ipv4_only,
             canvas_noise: effective_fp.canvas_noise,
         };
         let mut bundle = crate::auto_fingerprint::generate_auto_bundle(&opts, &geo);
@@ -1298,11 +1318,14 @@ pub async fn launch_instance(
 
     let mut addons: Vec<String> = Vec::new();
     if effective_fp.enable_ublock == Some(true) {
-        if let Some(ubo_dir) = bin_path.parent().map(|d| d.join("addons").join("UBO")) {
-            if ubo_dir.join("manifest.json").is_file() {
-                addons.push(ubo_dir.to_string_lossy().to_string());
-            }
-        }
+        let ubo_dir = bin_path
+            .parent()
+            .map(|d| d.join("addons").join("UBO"))
+            .filter(|d| d.join("manifest.json").is_file())
+            .ok_or_else(|| {
+                "Bundled uBlock Origin (addons/UBO) not found beside Camoufox binary. Update the engine or disable uBlock Origin in instance settings.".to_string()
+            })?;
+        addons.push(ubo_dir.to_string_lossy().to_string());
     }
     if let Some(ext_path) = proxy_ext {
         addons.push(ext_path.to_string_lossy().to_string());
@@ -1311,8 +1334,6 @@ pub async fn launch_instance(
         camou_map.insert("addons".into(), serde_json::json!(addons));
     }
 
-    // Clear stale user-branch copies of Camoufox startup prefs so CAMOU_PREFS_1..N
-    // default-branch values take effect cleanly on every relaunch.
     const MANAGED_CAMOU_PREFS: &[&str] = &[
         "intl.locale.requested",
         "permissions.default.geo",
@@ -1330,7 +1351,8 @@ pub async fn launch_instance(
         "privacy.globalprivacycontrol.enabled",
         "layout.css.devPixelsPerPx",
     ];
-    let _ = scrub_managed_prefs_from_prefs_js(&instance_dir, MANAGED_CAMOU_PREFS);
+    scrub_managed_prefs_from_prefs_js(&instance_dir, MANAGED_CAMOU_PREFS)
+        .map_err(|e| format!("Failed to clean stale startup prefs: {}", e))?;
     let camou_config_json = serde_json::Value::Object(camou_map).to_string();
 
     let mut cmd = std::process::Command::new(bin_path);
@@ -1344,13 +1366,10 @@ pub async fn launch_instance(
     if let Some(ref url) = startup_url {
         cmd.arg(url);
     }
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            crate::socks5_relay::stop_for_instance(&id);
-            return Err(format!("Failed to launch instance: {}", e));
-        }
-    };
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to launch instance: {}", e))?;
+    relay_guard.active = false;
 
     let pid = child.id();
     process_manager::register(&id, pid);
@@ -1412,11 +1431,15 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             write_json_atomic(&config_path, &config)?;
 
             let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
+            let block_webrtc = config
+                .fingerprint
+                .as_ref()
+                .is_some_and(|f| f.block_webrtc == Some(true));
             ensure_user_js(
                 &instance_dir,
                 resolved_proxy.as_ref(),
                 config.persist_data,
-                false,
+                block_webrtc,
             )
             .map_err(|e| format!("Failed to update user.js: {}", e))?;
 
@@ -1506,33 +1529,20 @@ pub async fn update_instance_proxy(
         if let Ok(mut config) = serde_json::from_str::<InstanceConfig>(&contents) {
             config.proxy_config = proxy_config.clone();
 
-            // Also update the legacy proxy field for display purposes
-            config.proxy = proxy_config.as_ref().and_then(|pc| {
-                let ptype = pc.proxy_type.as_deref()?;
-                let host = pc.host.as_deref()?;
-                let port = pc.port?;
-                if host.is_empty() || port == 0 {
-                    return None;
-                }
-                match (pc.username.as_deref(), pc.password.as_deref()) {
-                    (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
-                        Some(format!("{}://{}:{}@{}:{}", ptype, user, pass, host, port))
-                    }
-                    (Some(user), _) if !user.is_empty() => {
-                        Some(format!("{}://{}@{}:{}", ptype, user, host, port))
-                    }
-                    _ => Some(format!("{}://{}:{}", ptype, host, port)),
-                }
-            });
+            config.proxy = proxy_config.as_ref().and_then(format_legacy_proxy);
 
             write_json_atomic(&config_path, &config)?;
 
             let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
+            let block_webrtc = config
+                .fingerprint
+                .as_ref()
+                .is_some_and(|f| f.block_webrtc == Some(true));
             ensure_user_js(
                 &instance_dir,
                 resolved_proxy.as_ref(),
                 config.persist_data,
-                false,
+                block_webrtc,
             )
             .map_err(|e| format!("Failed to update user.js: {}", e))?;
 
@@ -1706,11 +1716,15 @@ pub async fn import_instances(
         let config_path = instance_dir.join("anon_config.json");
         write_json_atomic(&config_path, &new_config)?;
         let resolved_proxy = resolve_effective_proxy(&new_config.proxy_config, &new_config.proxy);
+        let block_webrtc = new_config
+            .fingerprint
+            .as_ref()
+            .is_some_and(|f| f.block_webrtc == Some(true));
         ensure_user_js(
             &instance_dir,
             resolved_proxy.as_ref(),
             new_config.persist_data,
-            false,
+            block_webrtc,
         )
         .map_err(|e| format!("Failed to write user.js: {}", e))?;
         imported.push(new_config);
@@ -1962,5 +1976,98 @@ mod tests {
         let legacy_json = r#"{"user_agent":"Firefox/148.0","canvas_seed":123,"audio_seed":456,"battery_level":0.9,"humanize":true}"#;
         let parsed: FingerprintConfig = serde_json::from_str(legacy_json).unwrap();
         assert_eq!(parsed.user_agent.as_deref(), Some("Firefox/148.0"));
+    }
+
+    #[test]
+    fn new_instance_applies_default_templates_or_auto_default() {
+        let defaults = crate::settings::AppSettings::default();
+        let cfg = build_new_instance_config("id-1".into(), "One".into(), None, true, &defaults);
+        assert_eq!(
+            cfg.fingerprint.as_ref().and_then(|f| f.auto_fingerprint),
+            Some(true)
+        );
+        assert_eq!(
+            cfg.fingerprint.as_ref().and_then(|f| f.auto_os.as_deref()),
+            None
+        );
+
+        let templated = crate::settings::AppSettings {
+            default_proxy_template: Some(ProxyConfig {
+                proxy_type: Some("http".into()),
+                host: Some("tmpl.proxy".into()),
+                port: Some(8080),
+                username: Some("u@1".into()),
+                password: Some("p:2".into()),
+            }),
+            default_fingerprint_template: Some(FingerprintConfig {
+                auto_fingerprint: Some(true),
+                auto_os: Some("linux".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cfg2 = build_new_instance_config("id-2".into(), "Two".into(), None, false, &templated);
+        assert_eq!(
+            cfg2.proxy_config.as_ref().and_then(|p| p.host.as_deref()),
+            Some("tmpl.proxy")
+        );
+        assert_eq!(
+            cfg2.fingerprint.as_ref().and_then(|f| f.auto_os.as_deref()),
+            Some("linux")
+        );
+        let reparsed = parse_legacy_proxy_string(cfg2.proxy.as_deref().unwrap()).unwrap();
+        assert_eq!(reparsed.username.as_deref(), Some("u@1"));
+        assert_eq!(reparsed.password.as_deref(), Some("p:2"));
+    }
+
+    #[test]
+    fn proxy_rotation_selects_same_entry_for_routing_and_auth() {
+        let p0 = ProxyConfig {
+            proxy_type: Some("http".into()),
+            host: Some("p0.test".into()),
+            port: Some(8000),
+            username: Some("u0".into()),
+            password: Some("k0".into()),
+        };
+        let p1 = ProxyConfig {
+            proxy_type: Some("http".into()),
+            host: Some("p1.test".into()),
+            port: Some(8001),
+            username: Some("u1".into()),
+            password: Some("k1".into()),
+        };
+        let mut cfg = build_new_instance_config(
+            "id-rot".into(),
+            "Rot".into(),
+            None,
+            true,
+            &crate::settings::AppSettings::default(),
+        );
+        cfg.proxy_pool = Some(vec![p0.clone(), p1.clone()]);
+        cfg.proxy_rotation_mode = Some("sequential".into());
+        cfg.proxy_rotation_index = Some(0);
+
+        let (sel0, next0) = select_proxy_for_launch(Some(&cfg));
+        assert_eq!(
+            sel0.as_ref().and_then(|p| p.host.as_deref()),
+            Some("p0.test")
+        );
+        assert_eq!(
+            sel0.as_ref().and_then(|p| p.username.as_deref()),
+            Some("u0")
+        );
+        assert_eq!(next0, Some(1));
+
+        cfg.proxy_rotation_index = next0;
+        let (sel1, next1) = select_proxy_for_launch(Some(&cfg));
+        assert_eq!(
+            sel1.as_ref().and_then(|p| p.host.as_deref()),
+            Some("p1.test")
+        );
+        assert_eq!(
+            sel1.as_ref().and_then(|p| p.username.as_deref()),
+            Some("u1")
+        );
+        assert_eq!(next1, Some(2));
     }
 }

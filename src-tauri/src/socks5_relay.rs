@@ -69,7 +69,9 @@ pub(crate) async fn spawn_relay(
                                 let _ = handle_client(client, &host, upstream_port, &user, &pass).await;
                             });
                         }
-                        Err(_) => break,
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                        }
                     }
                 }
             }
@@ -152,13 +154,11 @@ mod tests {
         let upstream_task = tokio::spawn(async move {
             let (mut sock, _) = upstream_listener.accept().await.unwrap();
 
-            // Expect SOCKS5 greeting offering user/pass auth (0x02)
             let mut g = [0u8; 3];
             sock.read_exact(&mut g).await.unwrap();
             assert_eq!(g, [0x05, 0x01, 0x02]);
             sock.write_all(&[0x05, 0x02]).await.unwrap();
 
-            // Expect RFC 1929 auth packet
             let mut v_ulen = [0u8; 2];
             sock.read_exact(&mut v_ulen).await.unwrap();
             assert_eq!(v_ulen[0], 0x01);
@@ -172,7 +172,6 @@ mod tests {
             assert_eq!(pass, b"p@ss:1#2");
             sock.write_all(&[0x01, 0x00]).await.unwrap();
 
-            // Echo payload after auth
             let mut buf = [0u8; 5];
             sock.read_exact(&mut buf).await.unwrap();
             assert_eq!(&buf, b"hello");

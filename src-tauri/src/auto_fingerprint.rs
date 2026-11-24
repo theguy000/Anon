@@ -481,7 +481,6 @@ pub struct AutoFingerprintOptions<'a> {
     pub target_ff_version: Option<&'a str>,
     pub identity_seed: u64,
     pub block_webrtc: bool,
-    pub network_ipv4_only: Option<bool>,
     pub canvas_noise: Option<bool>,
 }
 
@@ -712,7 +711,6 @@ pub fn generate_auto_bundle(
         }
     }
 
-    // Camoufox v159 CPU identity (drives canvas/WebAudio/Opus/WASM arithmetic parity)
     let (cpu_arch, cpu_maker) = infer_cpu_identity(target_os, webgl_renderer, &mut rng);
     config.insert("cpu:arch".into(), serde_json::json!(cpu_arch));
     config.insert("cpu:manufacturer".into(), serde_json::json!(cpu_maker));
@@ -720,7 +718,6 @@ pub fn generate_auto_bundle(
         prefs.insert("general.cpu_identity".into(), serde_json::json!(pref_val));
     }
 
-    // Geo, Locale & WebRTC
     config.insert("timezone".into(), serde_json::json!(geo.timezone));
     config.insert("locale:language".into(), serde_json::json!(geo.language));
     config.insert("locale:region".into(), serde_json::json!(geo.region));
@@ -752,13 +749,6 @@ pub fn generate_auto_bundle(
         }
     }
 
-    if let Some(ipv4_only) = opts.network_ipv4_only {
-        if ipv4_only {
-            config.insert("network:ipv4Only".into(), serde_json::json!(true));
-        }
-    }
-
-    // Deterministic font subset from v159 bundle
     let fonts = generate_font_subset(target_os, &mut rng);
     let is_win11_fonts = target_os == "windows"
         && (fonts.is_empty()
@@ -799,12 +789,10 @@ pub fn generate_auto_bundle(
     }
     config.insert("voices:blockIfNotDefined".into(), serde_json::json!(true));
 
-    // Deterministic OS-matched media devices
     for (k, v) in draw_media_devices(target_os, &mut rng) {
         config.insert(k, v);
     }
 
-    // Scrollbars & wheel parity
     let overlay_scrollbars = if target_os == "windows" {
         if is_win11_fonts {
             1
@@ -946,7 +934,6 @@ mod audit {
                 target_ff_version: Some("159"),
                 identity_seed: identity_seed(&id, 0),
                 block_webrtc: false,
-                network_ipv4_only: None,
                 canvas_noise: None,
             };
             let out = generate_auto_bundle(&opts, &resolve(country, &id));
@@ -993,7 +980,6 @@ mod audit {
                 target_ff_version: Some("159"),
                 identity_seed: identity_seed(id, nonce),
                 block_webrtc: false,
-                network_ipv4_only: None,
                 canvas_noise: None,
             };
             generate_auto_bundle(&opts, &geo)
@@ -1032,7 +1018,6 @@ mod audit {
                 target_ff_version: Some("159"),
                 identity_seed: identity_seed(id, 0),
                 block_webrtc: false,
-                network_ipv4_only: None,
                 canvas_noise: None,
             },
             &geo,
@@ -1056,7 +1041,6 @@ mod audit {
                 target_ff_version: Some("159"),
                 identity_seed: identity_seed(id, 0),
                 block_webrtc: false,
-                network_ipv4_only: None,
                 canvas_noise: None,
             },
             &geo,

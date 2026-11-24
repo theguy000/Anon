@@ -4,7 +4,7 @@ use crate::camoufox::{get_data_dir, write_json_atomic};
 use crate::instances::ProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
@@ -12,6 +12,7 @@ const PROXY_CACHE_TTL_SECS: u64 = 6 * 3600;
 const DIRECT_CACHE_TTL_SECS: u64 = 3600;
 
 static GEO_TABLE: OnceLock<HashMap<String, CountryProfile>> = OnceLock::new();
+static GEO_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Deserialize)]
 struct GeoTable {
@@ -278,6 +279,10 @@ pub(crate) fn write_cached_lookup(
     lookup: &GeoLookup,
     now: u64,
 ) -> Result<(), String> {
+    let _guard = GEO_CACHE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
     let mut map = std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str::<HashMap<String, GeoCacheEntry>>(&t).ok())
@@ -324,9 +329,10 @@ async fn fetch_geo(app: &AppHandle, proxy: Option<&ProxyConfig>) -> Option<GeoLo
     }
     let client = builder.build().ok()?;
 
-    let lookup = fetch_from_ipapi_co(&client)
-        .await
-        .or(fetch_from_ip_api_com(&client).await)?;
+    let lookup = match fetch_from_ipapi_co(&client).await {
+        Some(found) => found,
+        None => fetch_from_ip_api_com(&client).await?,
+    };
 
     let _ = write_cached_lookup(&path, &key, &lookup, now);
     Some(lookup)

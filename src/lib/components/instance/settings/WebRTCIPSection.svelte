@@ -5,6 +5,7 @@
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
+  export let autoMode: boolean = false;
 </script>
 
 <SettingsSection
@@ -45,7 +46,7 @@
       <span class="slider"></span>
     </label>
   </div>
-  {#if !fp.block_webrtc}
+  {#if !fp.block_webrtc && !autoMode}
     <div class="field-row mt">
       <div class="field half">
         <label for="fp-public-ipv4">Spoofed public IPv4</label>

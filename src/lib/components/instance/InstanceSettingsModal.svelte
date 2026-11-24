@@ -69,6 +69,22 @@
   let autoChangeWindowSize = true;
   let autoWindowPresetIndex = -1;
 
+  function parseLegacyProxy(raw: string | null | undefined): ProxyConfig {
+    if (!raw?.trim()) return {};
+    const m = raw
+      .trim()
+      .match(/^(socks5|socks4|https?):\/\/(?:([^:@/]+)(?::([^@/]*))?@)?([^/:]+):(\d+)/i);
+    if (!m) return {};
+    const rawScheme = m[1].toLowerCase();
+    return {
+      proxy_type: rawScheme === "https" ? "http" : rawScheme,
+      username: m[2] ? decodeURIComponent(m[2]) : null,
+      password: m[3] ? decodeURIComponent(m[3]) : null,
+      host: m[4],
+      port: Number(m[5]),
+    };
+  }
+
   // Initialize once per open transition so background store refreshes mid-save
   // cannot wipe in-progress edits.
   let lastInitKey = "";
@@ -78,7 +94,9 @@
       lastInitKey = key;
       if (key) {
         fp = instance.fingerprint ? { ...instance.fingerprint } : {};
-        proxyConfig = instance.proxy_config ? { ...instance.proxy_config } : {};
+        proxyConfig = instance.proxy_config
+          ? { ...instance.proxy_config }
+          : parseLegacyProxy(instance.proxy);
         notes = instance.notes ?? "";
         instanceTags = instance.tags ? [...instance.tags] : [];
         saving = false;
@@ -169,7 +187,7 @@
       fp.global_category = globalCategory || null;
       fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
       fp.auto_fingerprint = autoMode;
-      fp.auto_os = autoMode ? autoOs : null;
+      fp.auto_os = autoMode ? (autoOs === "host" ? null : autoOs) : null;
       fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
       if (autoMode) {
         const preset =
@@ -359,8 +377,8 @@
         </div>
 
         {#if autoMode}
-          <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} />
-          <BehaviorSection bind:fp bind:open={sections["behavior"]} />
+          <WebRTCIPSection bind:fp bind:open={sections["webrtc"]} autoMode={true} />
+          <BehaviorSection bind:fp bind:open={sections["behavior"]} autoMode={true} />
           <AdvancedSection bind:fp bind:open={sections["advanced"]} />
         {:else}
           <div class="preset-panel">

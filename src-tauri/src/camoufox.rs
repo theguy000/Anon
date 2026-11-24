@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone, Default)]
@@ -28,7 +29,7 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
-static LEGACY_MIGRATION_DONE: AtomicBool = AtomicBool::new(false);
+static LEGACY_MIGRATION_ONCE: Once = Once::new();
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -124,12 +125,12 @@ pub async fn get_data_dir(app: &AppHandle) -> PathBuf {
     if !data_dir.exists() {
         std::fs::create_dir_all(&data_dir).unwrap();
     }
-    if !LEGACY_MIGRATION_DONE.swap(true, Ordering::AcqRel) {
+    LEGACY_MIGRATION_ONCE.call_once(|| {
         let legacy_engine_dir = data_dir.join("camoufox");
         if let Err(e) = migrate_legacy_user_data(&legacy_engine_dir, &data_dir) {
             eprintln!("Legacy user data migration warning: {}", e);
         }
-    }
+    });
     data_dir
 }
 
