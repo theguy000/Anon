@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
@@ -246,6 +246,8 @@ export interface InstallStatus {
 }
 
 export const installProgress = writable<InstallStatus | null>(null);
+export const engineUpdateProgress = writable<InstallStatus | null>(null);
+export const engineUpdating = derived(engineUpdateProgress, ($progress) => $progress !== null);
 export const instances = writable<InstanceConfig[]>([]);
 export const fingerprintPresets = writable<Record<string, Preset[]>>({});
 export const isLaunching = writable<string | null>(null);
@@ -421,6 +423,40 @@ export async function startDownload() {
   } finally {
     unlisten();
     await loadInstances();
+  }
+}
+
+export interface EngineUpdateOutcome {
+  updated: boolean;
+  previous_version: string;
+  current_version: string;
+}
+
+export async function updateCamoufox(): Promise<EngineUpdateOutcome | null> {
+  if (get(engineUpdating)) return null;
+
+  engineUpdateProgress.set({ status: 'Checking latest release...', progress: 0 });
+  let unlisten: (() => void) | null = null;
+
+  try {
+    unlisten = await listen<InstallStatus>('install_progress', (event) => {
+      engineUpdateProgress.set(event.payload);
+    });
+    const outcome = await invoke<EngineUpdateOutcome>('update_camoufox');
+    if (outcome.updated) {
+      camoufoxVersion.set(outcome.current_version);
+      await loadFingerprintPresets();
+      addToast(`Engine updated to ${outcome.current_version}`, 'success');
+    } else {
+      addToast(`Engine is already up to date (${outcome.current_version})`, 'info');
+    }
+    return outcome;
+  } catch (e) {
+    addToast(`Engine update failed: ${e}`, 'error');
+    return null;
+  } finally {
+    unlisten?.();
+    engineUpdateProgress.set(null);
   }
 }
 

@@ -27,6 +27,11 @@ async fn fetch_camoufox(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn update_camoufox(app: tauri::AppHandle) -> Result<camoufox::UpdateOutcome, String> {
+    camoufox::update_camoufox(&app).await
+}
+
+#[tauri::command]
 async fn list_instances(app: tauri::AppHandle) -> Result<Vec<instances::InstanceConfig>, String> {
     instances::list_instances(&app).await
 }
@@ -269,6 +274,7 @@ pub fn run() {
             check_camoufox,
             get_camoufox_version,
             fetch_camoufox,
+            update_camoufox,
             list_instances,
             create_instance,
             delete_instance,
