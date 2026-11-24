@@ -1,29 +1,32 @@
 <script lang="ts">
   import SettingsSection from "../SettingsSection.svelte";
   import type { FingerprintConfig } from "$lib/store";
-  import { numVal, setNum } from "./utils";
 
   export let fp: FingerprintConfig;
   export let open: boolean = false;
 </script>
 
-<SettingsSection title="FONTS"
-  hint="{[fp.fonts_spacing_seed].filter((v) => v != null).length} SET"
+<SettingsSection
+  title="Fonts"
+  hint="{fp.fonts?.length ? `${fp.fonts.length} fonts` : 'Auto'}"
   bind:open
 >
-  <div class="field" data-tooltip="The seed used to randomize letter spacing to prevent font fingerprinting.">
-    <label for="fp-spacing-seed">SPACING SEED</label>
-    <input id="fp-spacing-seed"
-      type="number"
-      min="0"
-      value={numVal(fp.fonts_spacing_seed)}
-      on:input={(e) => fp = setNum(fp, "fonts_spacing_seed", e)}
-      placeholder="AUTO (RANDOM)"
-      class="input-field"
-    />
-    <span class="field-hint"
-      >RANDOMIZES LETTER SPACING TO PREVENT FONT METRICS FINGERPRINTING.
-      ANY INTEGER.</span
-    >
+  <div class="field">
+    <label for="fp-fonts-list">Allowed font families (comma-separated)</label>
+    <textarea
+      id="fp-fonts-list"
+      value={fp.fonts?.join(", ") ?? ""}
+      on:change={(e) => {
+        const val = (e.target as HTMLTextAreaElement).value.trim();
+        fp.fonts = val ? val.split(",").map((s) => s.trim()).filter(Boolean) : null;
+        fp = fp;
+      }}
+      placeholder="Auto — OS font subset from Camoufox v159 bundle"
+      class="input-field mono textarea"
+      rows="3"
+    ></textarea>
+    <span class="field-hint">
+      Leave empty to use Camoufox's bundled OS font set.
+    </span>
   </div>
 </SettingsSection>

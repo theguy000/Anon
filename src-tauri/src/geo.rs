@@ -51,7 +51,11 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
 pub fn identity_seed(instance_id: &str, nonce: u64) -> u64 {
     let input = format!("{}:{}", instance_id, nonce);
     let h = fnv1a64(input.as_bytes());
-    if h == 0 { 1 } else { h }
+    if h == 0 {
+        1
+    } else {
+        h
+    }
 }
 
 /// Credential-free cache key: hashes the proxy URL so passwords are never persisted to disk.
@@ -379,7 +383,10 @@ mod tests {
         let id = "11111111-1111-4111-8111-111111111111";
         assert_eq!(identity_seed(id, 0), identity_seed(id, 0));
         assert_ne!(identity_seed(id, 0), identity_seed(id, 1));
-        assert_ne!(identity_seed(id, 0), identity_seed("22222222-2222-4222-8222-222222222222", 0));
+        assert_ne!(
+            identity_seed(id, 0),
+            identity_seed("22222222-2222-4222-8222-222222222222", 0)
+        );
     }
 
     #[test]
@@ -397,7 +404,8 @@ mod tests {
         assert!(!key.contains("supersecretpass"));
         assert!(!key.contains("proxy.secret.net"));
 
-        let tmp = std::env::temp_dir().join(format!("anon_geo_cache_{}.json", uuid::Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("anon_geo_cache_{}.json", uuid::Uuid::new_v4()));
         let lookup = GeoLookup {
             ip: Some("203.0.113.10".into()),
             country_name: Some("Germany".into()),

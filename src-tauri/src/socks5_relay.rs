@@ -28,8 +28,7 @@ pub async fn start_for_instance(
     password: String,
 ) -> Result<u16, String> {
     stop_for_instance(instance_id);
-    let (addr, shutdown_tx) =
-        spawn_relay(upstream_host, upstream_port, username, password).await?;
+    let (addr, shutdown_tx) = spawn_relay(upstream_host, upstream_port, username, password).await?;
     registry()
         .lock()
         .unwrap()

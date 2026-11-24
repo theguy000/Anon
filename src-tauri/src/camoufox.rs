@@ -1170,20 +1170,43 @@ mod tests {
         let data_dir = tmp.path().join("Anon");
         let engine_dir = data_dir.join("camoufox");
         std::fs::create_dir_all(engine_dir.join("profiles").join("p1")).unwrap();
-        std::fs::write(engine_dir.join("profiles").join("p1").join("anon_config.json"), b"{\"id\":\"p1\"}").unwrap();
-        std::fs::write(engine_dir.join("settings.json"), b"{\"skip_wipe_confirmation\":true}").unwrap();
+        std::fs::write(
+            engine_dir
+                .join("profiles")
+                .join("p1")
+                .join("anon_config.json"),
+            b"{\"id\":\"p1\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            engine_dir.join("settings.json"),
+            b"{\"skip_wipe_confirmation\":true}",
+        )
+        .unwrap();
         std::fs::write(engine_dir.join("geo_cache.json"), b"{}").unwrap();
         std::fs::write(engine_dir.join("camoufox.exe"), b"bin").unwrap();
 
         migrate_legacy_user_data(&engine_dir, &data_dir).unwrap();
-        assert!(data_dir.join("profiles").join("p1").join("anon_config.json").is_file());
+        assert!(data_dir
+            .join("profiles")
+            .join("p1")
+            .join("anon_config.json")
+            .is_file());
         assert!(data_dir.join("settings.json").is_file());
         assert!(data_dir.join("geo_cache.json").is_file());
         assert!(engine_dir.join("camoufox.exe").is_file());
         assert!(!engine_dir.join("settings.json").exists());
 
-        std::fs::write(data_dir.join("settings.json"), b"{\"skip_wipe_confirmation\":false}").unwrap();
-        std::fs::write(engine_dir.join("settings.json"), b"{\"skip_wipe_confirmation\":true}").unwrap();
+        std::fs::write(
+            data_dir.join("settings.json"),
+            b"{\"skip_wipe_confirmation\":false}",
+        )
+        .unwrap();
+        std::fs::write(
+            engine_dir.join("settings.json"),
+            b"{\"skip_wipe_confirmation\":true}",
+        )
+        .unwrap();
         migrate_legacy_user_data(&engine_dir, &data_dir).unwrap();
         assert_eq!(
             std::fs::read_to_string(data_dir.join("settings.json")).unwrap(),
@@ -1203,7 +1226,10 @@ mod tests {
         std::fs::write(&default_bin, b"default").unwrap();
         std::fs::write(&custom_bin, b"custom").unwrap();
 
-        assert_eq!(resolve_camoufox_binary(None, &engine_dir), Some(default_bin));
+        assert_eq!(
+            resolve_camoufox_binary(None, &engine_dir),
+            Some(default_bin)
+        );
         assert_eq!(
             resolve_camoufox_binary(Some(custom_bin.to_str().unwrap()), &engine_dir),
             Some(custom_bin.clone())
@@ -1213,7 +1239,10 @@ mod tests {
             Some(custom_bin)
         );
         assert_eq!(
-            resolve_camoufox_binary(Some(tmp.path().join("missing.exe").to_str().unwrap()), &engine_dir),
+            resolve_camoufox_binary(
+                Some(tmp.path().join("missing.exe").to_str().unwrap()),
+                &engine_dir
+            ),
             None
         );
     }

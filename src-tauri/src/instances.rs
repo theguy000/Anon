@@ -307,10 +307,16 @@ pub(crate) fn build_camou_config_and_prefs(
     set_bool!("navigator.globalPrivacyControl", fp.global_privacy_control);
 
     if let Some(ref dnt) = fp.do_not_track {
-        prefs.insert("privacy.donottrackheader.enabled".into(), serde_json::json!(dnt == "1"));
+        prefs.insert(
+            "privacy.donottrackheader.enabled".into(),
+            serde_json::json!(dnt == "1"),
+        );
     }
     if let Some(gpc) = fp.global_privacy_control {
-        prefs.insert("privacy.globalprivacycontrol.enabled".into(), serde_json::json!(gpc));
+        prefs.insert(
+            "privacy.globalprivacycontrol.enabled".into(),
+            serde_json::json!(gpc),
+        );
     }
 
     // CPU identity
@@ -335,7 +341,10 @@ pub(crate) fn build_camou_config_and_prefs(
     set_f64!("window.devicePixelRatio", fp.device_pixel_ratio);
     if let Some(dpr) = fp.device_pixel_ratio {
         if dpr > 0.0 {
-            prefs.insert("layout.css.devPixelsPerPx".into(), serde_json::json!(format!("{}", dpr)));
+            prefs.insert(
+                "layout.css.devPixelsPerPx".into(),
+                serde_json::json!(format!("{}", dpr)),
+            );
         }
     }
 
@@ -351,8 +360,14 @@ pub(crate) fn build_camou_config_and_prefs(
     set_str!("webGl:renderer", fp.webgl_renderer);
     set_str!("webGl:vendor", fp.webgl_vendor);
     if let Some(v) = fp.webgl_block_if_not_defined {
-        m.insert("webGl:shaderPrecisionFormats:blockIfNotDefined".into(), serde_json::json!(v));
-        m.insert("webGl2:shaderPrecisionFormats:blockIfNotDefined".into(), serde_json::json!(v));
+        m.insert(
+            "webGl:shaderPrecisionFormats:blockIfNotDefined".into(),
+            serde_json::json!(v),
+        );
+        m.insert(
+            "webGl2:shaderPrecisionFormats:blockIfNotDefined".into(),
+            serde_json::json!(v),
+        );
     }
 
     // AudioContext
@@ -391,7 +406,10 @@ pub(crate) fn build_camou_config_and_prefs(
                     parts.push(reg.as_str());
                 }
             }
-            prefs.insert("intl.locale.requested".into(), serde_json::json!(parts.join("-")));
+            prefs.insert(
+                "intl.locale.requested".into(),
+                serde_json::json!(parts.join("-")),
+            );
         }
     }
 
@@ -585,9 +603,7 @@ pub(crate) fn resolve_effective_proxy(
             return Some(pc.clone());
         }
     }
-    legacy_proxy
-        .as_deref()
-        .and_then(parse_legacy_proxy_string)
+    legacy_proxy.as_deref().and_then(parse_legacy_proxy_string)
 }
 
 fn format_legacy_proxy(pc: &ProxyConfig) -> Option<String> {
@@ -625,36 +641,78 @@ pub(crate) fn build_profile_user_prefs(
     prefs.push(("browser.sessionhistory.max_entries", serde_json::json!(50)));
 
     if persist_data {
-        prefs.push(("browser.sessionhistory.max_total_viewers", serde_json::json!(-1)));
+        prefs.push((
+            "browser.sessionhistory.max_total_viewers",
+            serde_json::json!(-1),
+        ));
         prefs.push(("browser.startup.page", serde_json::json!(3)));
-        prefs.push(("browser.sessionstore.resume_from_crash", serde_json::json!(true)));
+        prefs.push((
+            "browser.sessionstore.resume_from_crash",
+            serde_json::json!(true),
+        ));
         prefs.push(("browser.sessionstore.privacy_level", serde_json::json!(0)));
         prefs.push(("browser.formfill.enable", serde_json::json!(true)));
-        prefs.push(("browser.places.interactions.enabled", serde_json::json!(true)));
+        prefs.push((
+            "browser.places.interactions.enabled",
+            serde_json::json!(true),
+        ));
         prefs.push(("browser.urlbar.suggest.history", serde_json::json!(true)));
         prefs.push(("signon.rememberSignons", serde_json::json!(true)));
-        prefs.push(("privacy.sanitize.sanitizeOnShutdown", serde_json::json!(false)));
-        prefs.push(("privacy.clearOnShutdown.openWindows", serde_json::json!(false)));
+        prefs.push((
+            "privacy.sanitize.sanitizeOnShutdown",
+            serde_json::json!(false),
+        ));
+        prefs.push((
+            "privacy.clearOnShutdown.openWindows",
+            serde_json::json!(false),
+        ));
     } else {
-        prefs.push(("browser.sessionhistory.max_total_viewers", serde_json::json!(0)));
+        prefs.push((
+            "browser.sessionhistory.max_total_viewers",
+            serde_json::json!(0),
+        ));
         prefs.push(("browser.startup.page", serde_json::json!(1)));
-        prefs.push(("browser.sessionstore.resume_from_crash", serde_json::json!(false)));
+        prefs.push((
+            "browser.sessionstore.resume_from_crash",
+            serde_json::json!(false),
+        ));
         prefs.push(("browser.sessionstore.privacy_level", serde_json::json!(2)));
         prefs.push(("browser.formfill.enable", serde_json::json!(false)));
-        prefs.push(("browser.places.interactions.enabled", serde_json::json!(false)));
+        prefs.push((
+            "browser.places.interactions.enabled",
+            serde_json::json!(false),
+        ));
         prefs.push(("browser.urlbar.suggest.history", serde_json::json!(false)));
         prefs.push(("signon.rememberSignons", serde_json::json!(false)));
-        prefs.push(("privacy.sanitize.sanitizeOnShutdown", serde_json::json!(true)));
+        prefs.push((
+            "privacy.sanitize.sanitizeOnShutdown",
+            serde_json::json!(true),
+        ));
         prefs.push(("privacy.clearOnShutdown.cookies", serde_json::json!(true)));
         prefs.push(("privacy.clearOnShutdown.cache", serde_json::json!(true)));
         prefs.push(("privacy.clearOnShutdown.history", serde_json::json!(true)));
-        prefs.push(("privacy.clearOnShutdown.offlineApps", serde_json::json!(true)));
+        prefs.push((
+            "privacy.clearOnShutdown.offlineApps",
+            serde_json::json!(true),
+        ));
         prefs.push(("privacy.clearOnShutdown.sessions", serde_json::json!(true)));
-        prefs.push(("privacy.clearOnShutdown.openWindows", serde_json::json!(true)));
-        prefs.push(("privacy.clearOnShutdown_v2.cookiesAndStorage", serde_json::json!(true)));
+        prefs.push((
+            "privacy.clearOnShutdown.openWindows",
+            serde_json::json!(true),
+        ));
+        prefs.push((
+            "privacy.clearOnShutdown_v2.cookiesAndStorage",
+            serde_json::json!(true),
+        ));
         prefs.push(("privacy.clearOnShutdown_v2.cache", serde_json::json!(true)));
-        prefs.push(("privacy.clearOnShutdown_v2.browsingHistoryAndDownloads", serde_json::json!(true)));
-        prefs.push(("privacy.clearOnShutdown_v2.formdata", serde_json::json!(true)));
+        prefs.push((
+            "privacy.clearOnShutdown_v2.browsingHistoryAndDownloads",
+            serde_json::json!(true),
+        ));
+        prefs.push((
+            "privacy.clearOnShutdown_v2.formdata",
+            serde_json::json!(true),
+        ));
     }
 
     // Explicitly reset all proxy fields first so switching proxy types or to Direct
@@ -704,17 +762,33 @@ pub(crate) fn build_profile_user_prefs(
     prefs.push(("network.proxy.ssl_port", serde_json::json!(http_port)));
     prefs.push(("network.proxy.socks", serde_json::json!(socks_host)));
     prefs.push(("network.proxy.socks_port", serde_json::json!(socks_port)));
-    prefs.push(("network.proxy.socks_version", serde_json::json!(socks_version)));
-    prefs.push(("network.proxy.socks_remote_dns", serde_json::json!(socks_remote_dns)));
-    prefs.push(("network.proxy.allow_hijacking_localhost", serde_json::json!(false)));
+    prefs.push((
+        "network.proxy.socks_version",
+        serde_json::json!(socks_version),
+    ));
+    prefs.push((
+        "network.proxy.socks_remote_dns",
+        serde_json::json!(socks_remote_dns),
+    ));
+    prefs.push((
+        "network.proxy.allow_hijacking_localhost",
+        serde_json::json!(false),
+    ));
     prefs.push((
         "network.proxy.no_proxies_on",
-        serde_json::json!(if proxy_type == 1 { "localhost, 127.0.0.1, ::1" } else { "" }),
+        serde_json::json!(if proxy_type == 1 {
+            "localhost, 127.0.0.1, ::1"
+        } else {
+            ""
+        }),
     ));
 
     // Camoufox v159 enforces ICE proxy_only_if_behind_proxy + mDNS obfuscation in camoufox.cfg;
     // only disable PeerConnection outright when explicitly blocking WebRTC.
-    prefs.push(("media.peerconnection.enabled", serde_json::json!(!block_webrtc)));
+    prefs.push((
+        "media.peerconnection.enabled",
+        serde_json::json!(!block_webrtc),
+    ));
 
     prefs.push(("extensions.autoDisableScopes", serde_json::json!(0)));
     prefs.push(("xpinstall.signatures.required", serde_json::json!(false)));
@@ -749,9 +823,10 @@ pub(crate) fn scrub_managed_prefs_from_prefs_js(
     let mut changed = false;
     let mut kept = String::with_capacity(content.len());
     for line in content.lines() {
-        let should_drop = managed_keys
-            .iter()
-            .any(|k| line.trim_start().starts_with(&format!("user_pref(\"{}\",", k)));
+        let should_drop = managed_keys.iter().any(|k| {
+            line.trim_start()
+                .starts_with(&format!("user_pref(\"{}\",", k))
+        });
         if should_drop {
             changed = true;
         } else {
@@ -783,7 +858,11 @@ pub(crate) fn encode_ascii_json(value: &serde_json::Value) -> String {
     out
 }
 
-pub(crate) fn chunk_env_value(prefix: &str, data: &str, chunk_size: usize) -> Vec<(String, String)> {
+pub(crate) fn chunk_env_value(
+    prefix: &str,
+    data: &str,
+    chunk_size: usize,
+) -> Vec<(String, String)> {
     let chars: Vec<char> = data.chars().collect();
     chars
         .chunks(chunk_size)
@@ -1013,8 +1092,13 @@ pub async fn create_instance(
     write_json_atomic(&config_path, &config)?;
 
     let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
-    ensure_user_js(&instance_dir, resolved_proxy.as_ref(), config.persist_data, false)
-        .map_err(|e| format!("Failed to write user.js: {}", e))?;
+    ensure_user_js(
+        &instance_dir,
+        resolved_proxy.as_ref(),
+        config.persist_data,
+        false,
+    )
+    .map_err(|e| format!("Failed to write user.js: {}", e))?;
 
     Ok(config)
 }
@@ -1328,8 +1412,13 @@ pub async fn toggle_persistence(app: &AppHandle, id: String, enabled: bool) -> R
             write_json_atomic(&config_path, &config)?;
 
             let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
-            ensure_user_js(&instance_dir, resolved_proxy.as_ref(), config.persist_data, false)
-                .map_err(|e| format!("Failed to update user.js: {}", e))?;
+            ensure_user_js(
+                &instance_dir,
+                resolved_proxy.as_ref(),
+                config.persist_data,
+                false,
+            )
+            .map_err(|e| format!("Failed to update user.js: {}", e))?;
 
             if !enabled {
                 cleanup_instance_data_with_retry(&instance_dir)
@@ -1351,8 +1440,8 @@ pub async fn regenerate_identity(app: &AppHandle, id: String) -> Result<u64, Str
 
     let profiles_dir = get_profiles_dir(app).await;
     let config_path = profiles_dir.join(&id).join("anon_config.json");
-    let contents = fs::read_to_string(&config_path)
-        .map_err(|_| "Instance profile not found".to_string())?;
+    let contents =
+        fs::read_to_string(&config_path).map_err(|_| "Instance profile not found".to_string())?;
     let mut config = serde_json::from_str::<InstanceConfig>(&contents)
         .map_err(|e| format!("Failed to parse instance config: {}", e))?;
 
@@ -1439,8 +1528,13 @@ pub async fn update_instance_proxy(
             write_json_atomic(&config_path, &config)?;
 
             let resolved_proxy = resolve_effective_proxy(&config.proxy_config, &config.proxy);
-            ensure_user_js(&instance_dir, resolved_proxy.as_ref(), config.persist_data, false)
-                .map_err(|e| format!("Failed to update user.js: {}", e))?;
+            ensure_user_js(
+                &instance_dir,
+                resolved_proxy.as_ref(),
+                config.persist_data,
+                false,
+            )
+            .map_err(|e| format!("Failed to update user.js: {}", e))?;
 
             return Ok(());
         }
@@ -1612,8 +1706,13 @@ pub async fn import_instances(
         let config_path = instance_dir.join("anon_config.json");
         write_json_atomic(&config_path, &new_config)?;
         let resolved_proxy = resolve_effective_proxy(&new_config.proxy_config, &new_config.proxy);
-        ensure_user_js(&instance_dir, resolved_proxy.as_ref(), new_config.persist_data, false)
-            .map_err(|e| format!("Failed to write user.js: {}", e))?;
+        ensure_user_js(
+            &instance_dir,
+            resolved_proxy.as_ref(),
+            new_config.persist_data,
+            false,
+        )
+        .map_err(|e| format!("Failed to write user.js: {}", e))?;
         imported.push(new_config);
     }
     Ok(imported)
@@ -1685,7 +1784,8 @@ mod tests {
         let with_proxy = fs::read_to_string(dir.join("user.js")).unwrap();
         assert!(with_proxy.contains("user_pref(\"browser.sessionhistory.max_entries\", 50);"));
         assert!(with_proxy.contains("user_pref(\"privacy.sanitize.sanitizeOnShutdown\", true);"));
-        assert!(with_proxy.contains("user_pref(\"privacy.clearOnShutdown_v2.cookiesAndStorage\", true);"));
+        assert!(with_proxy
+            .contains("user_pref(\"privacy.clearOnShutdown_v2.cookiesAndStorage\", true);"));
         assert!(with_proxy.contains("user_pref(\"network.proxy.type\", 1);"));
         assert!(with_proxy.contains("user_pref(\"network.proxy.socks\", \"10.0.0.2\");"));
         assert!(with_proxy.contains("user_pref(\"media.peerconnection.enabled\", true);"));
@@ -1715,7 +1815,11 @@ mod tests {
         fs::create_dir_all(dir.join("storage").join("default")).unwrap();
         fs::write(dir.join("storage").join("default").join("data"), b"ls").unwrap();
         fs::create_dir_all(dir.join("sessionstore-backups")).unwrap();
-        fs::write(dir.join("sessionstore-backups").join("recovery.jsonlz4"), b"s").unwrap();
+        fs::write(
+            dir.join("sessionstore-backups").join("recovery.jsonlz4"),
+            b"s",
+        )
+        .unwrap();
 
         cleanup_instance_data(&dir).unwrap();
 
@@ -1751,7 +1855,9 @@ mod tests {
             username: Some("u".into()),
             password: Some("p".into()),
         };
-        assert!(ensure_proxy_auth_extension(&dir, Some(&socks)).unwrap().is_none());
+        assert!(ensure_proxy_auth_extension(&dir, Some(&socks))
+            .unwrap()
+            .is_none());
 
         let http = ProxyConfig {
             proxy_type: Some("http".into()),
@@ -1814,18 +1920,42 @@ mod tests {
         assert_eq!(cfg.get("cpu:arch"), Some(&serde_json::json!("x86")));
         assert_eq!(cfg.get("cpu:manufacturer"), Some(&serde_json::json!("amd")));
         assert_eq!(cfg.get("network:ipv4Only"), Some(&serde_json::json!(true)));
-        assert_eq!(cfg.get("media:spoof_codecs"), Some(&serde_json::json!(true)));
-        assert_eq!(cfg.get("webGl:shaderPrecisionFormats:blockIfNotDefined"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            cfg.get("media:spoof_codecs"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            cfg.get("webGl:shaderPrecisionFormats:blockIfNotDefined"),
+            Some(&serde_json::json!(true))
+        );
         assert!(!cfg.contains_key("webGl:parameters:blockIfNotDefined"));
         assert!(!cfg.contains_key("canvas:seed"));
         assert!(!cfg.contains_key("humanize"));
 
-        assert_eq!(prefs.get("general.cpu_identity"), Some(&serde_json::json!(2)));
-        assert_eq!(prefs.get("intl.locale.requested"), Some(&serde_json::json!("fr-FR")));
-        assert_eq!(prefs.get("permissions.default.geo"), Some(&serde_json::json!(1)));
-        assert_eq!(prefs.get("permissions.default.image"), Some(&serde_json::json!(2)));
-        assert_eq!(prefs.get("browser.tabs.remote.useCrossOriginOpenerPolicy"), Some(&serde_json::json!(false)));
-        assert_eq!(prefs.get("gfx.blacklist.webgpu"), Some(&serde_json::json!(4)));
+        assert_eq!(
+            prefs.get("general.cpu_identity"),
+            Some(&serde_json::json!(2))
+        );
+        assert_eq!(
+            prefs.get("intl.locale.requested"),
+            Some(&serde_json::json!("fr-FR"))
+        );
+        assert_eq!(
+            prefs.get("permissions.default.geo"),
+            Some(&serde_json::json!(1))
+        );
+        assert_eq!(
+            prefs.get("permissions.default.image"),
+            Some(&serde_json::json!(2))
+        );
+        assert_eq!(
+            prefs.get("browser.tabs.remote.useCrossOriginOpenerPolicy"),
+            Some(&serde_json::json!(false))
+        );
+        assert_eq!(
+            prefs.get("gfx.blacklist.webgpu"),
+            Some(&serde_json::json!(4))
+        );
         assert!(prefs.contains_key("privacy.baselineFingerprintingProtection.overrides"));
 
         // Verify legacy JSON with removed fields still deserializes cleanly

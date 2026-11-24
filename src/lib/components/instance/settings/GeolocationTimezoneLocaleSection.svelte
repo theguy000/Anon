@@ -17,6 +17,7 @@
     if (l.label === "AUTO") {
       fp.locale_language = null;
       fp.locale_region = null;
+      fp.locale_script = null;
       fp = fp;
       return;
     }
@@ -26,95 +27,114 @@
   }
 </script>
 
-<SettingsSection title="GEOLOCATION, TIMEZONE & LOCALE"
+<SettingsSection
+  title="Geolocation, Timezone & Locale"
   hint="{[
     fp.geo_latitude,
     fp.geo_longitude,
     fp.timezone,
     fp.locale_language,
-  ].filter((v) => v != null).length} SET"
+  ].filter((v) => v != null).length} set"
   bind:open
 >
   <div class="field-row">
-    <div class="field third" data-tooltip="The simulated latitude coordinate.">
-      <label for="fp-latitude">LATITUDE</label>
-      <input id="fp-latitude"
+    <div class="field third">
+      <label for="fp-latitude">Latitude</label>
+      <input
+        id="fp-latitude"
         type="number"
         min="-90"
         max="90"
         step="0.0001"
         value={numVal(fp.geo_latitude)}
-        on:input={(e) => fp = setFloat(fp, "geo_latitude", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setFloat(fp, "geo_latitude", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
-    <div class="field third" data-tooltip="The simulated longitude coordinate.">
-      <label for="fp-longitude">LONGITUDE</label>
-      <input id="fp-longitude"
+    <div class="field third">
+      <label for="fp-longitude">Longitude</label>
+      <input
+        id="fp-longitude"
         type="number"
         min="-180"
         max="180"
         step="0.0001"
         value={numVal(fp.geo_longitude)}
-        on:input={(e) => fp = setFloat(fp, "geo_longitude", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setFloat(fp, "geo_longitude", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
-    <div class="field third" data-tooltip="The simulated accuracy of the coordinates in meters.">
-      <label for="fp-accuracy-m">ACCURACY (M)</label>
-      <input id="fp-accuracy-m"
+    <div class="field third">
+      <label for="fp-accuracy-m">Accuracy (m)</label>
+      <input
+        id="fp-accuracy-m"
         type="number"
         min="0"
         step="0.1"
         value={numVal(fp.geo_accuracy)}
-        on:input={(e) => fp = setFloat(fp, "geo_accuracy", e)}
-        placeholder="AUTO"
+        on:input={(e) => (fp = setFloat(fp, "geo_accuracy", e))}
+        placeholder="Auto"
         class="input-field"
       />
     </div>
   </div>
-  <div class="field" data-tooltip="The simulated timezone of the user.">
-    <label for="fp-timezone">TIMEZONE</label>
-    <select id="fp-timezone"
+  <div class="field">
+    <label for="fp-timezone">Timezone</label>
+    <select
+      id="fp-timezone"
       value={fp.timezone ?? ""}
-      on:change={(e) => fp = setSelectStr(fp, "timezone", e)}
+      on:change={(e) => (fp = setSelectStr(fp, "timezone", e))}
       class="input-field tz-select"
     >
-      <option value="">AUTO</option>
+      <option value="">Auto</option>
       {#each timezones as tz}<option value={tz}>{tz}</option>{/each}
     </select>
   </div>
-  <div class="field" data-tooltip="Select a preset locale to auto-fill language and region codes.">
-    <label for="fp-locale-preset">LOCALE PRESET</label>
-    <select id="fp-locale-preset"
+  <div class="field">
+    <label for="fp-locale-preset">Locale preset</label>
+    <select
+      id="fp-locale-preset"
       value={selectedLocale}
       on:change={applyLocale}
       class="input-field"
     >
-      <option value="">— SELECT LOCALE —</option>
+      <option value="">— Select locale —</option>
       {#each LOCALES as l, i}<option value={i}>{l.label}</option>{/each}
     </select>
   </div>
   <div class="field-row">
-    <div class="field half" data-tooltip="The simulated language code (e.g. en).">
-      <label for="fp-language-code">LANGUAGE CODE</label>
-      <input id="fp-language-code"
+    <div class="field third">
+      <label for="fp-language-code">Language</label>
+      <input
+        id="fp-language-code"
         type="text"
         value={fp.locale_language ?? ""}
-        on:input={(e) => fp = setStr(fp, "locale_language", e)}
-        placeholder="AUTO (E.G. EN)"
+        on:input={(e) => (fp = setStr(fp, "locale_language", e))}
+        placeholder="e.g. en"
         class="input-field mono"
       />
     </div>
-    <div class="field half" data-tooltip="The simulated region code (e.g. US).">
-      <label for="fp-region-code">REGION CODE</label>
-      <input id="fp-region-code"
+    <div class="field third">
+      <label for="fp-region-code">Region</label>
+      <input
+        id="fp-region-code"
         type="text"
         value={fp.locale_region ?? ""}
-        on:input={(e) => fp = setStr(fp, "locale_region", e)}
-        placeholder="AUTO (E.G. US)"
+        on:input={(e) => (fp = setStr(fp, "locale_region", e))}
+        placeholder="e.g. US"
+        class="input-field mono"
+      />
+    </div>
+    <div class="field third">
+      <label for="fp-script-code">Script</label>
+      <input
+        id="fp-script-code"
+        type="text"
+        value={fp.locale_script ?? ""}
+        on:input={(e) => (fp = setStr(fp, "locale_script", e))}
+        placeholder="e.g. Hans"
         class="input-field mono"
       />
     </div>

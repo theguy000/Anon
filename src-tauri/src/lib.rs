@@ -150,7 +150,8 @@ async fn confirm_close_action(app: tauri::AppHandle, action: String) -> Result<(
             let running = process_manager::get_running_instances();
             for inst in &running {
                 let id = inst.id.clone();
-                let _ = tokio::task::spawn_blocking(move || process_manager::stop_instance(&id)).await;
+                let _ =
+                    tokio::task::spawn_blocking(move || process_manager::stop_instance(&id)).await;
                 socks5_relay::stop_for_instance(&inst.id);
             }
             for _ in 0..20 {

@@ -221,7 +221,11 @@ mod tests {
         fs::write(dir.join("anon_config.json"), b"{\"id\":\"x\"}").unwrap();
         fs::write(dir.join("cookies.sqlite"), vec![1u8; 64]).unwrap();
 
-        let lsng = dir.join("storage").join("default").join("https+++example.com").join("ls");
+        let lsng = dir
+            .join("storage")
+            .join("default")
+            .join("https+++example.com")
+            .join("ls");
         fs::create_dir_all(&lsng).unwrap();
         fs::write(lsng.join("data.sqlite"), vec![2u8; 512]).unwrap();
 

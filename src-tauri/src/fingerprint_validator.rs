@@ -296,7 +296,10 @@ fn check_os_screen(fp: &FingerprintConfig, detected_os: &Os) -> Vec<FingerprintC
 }
 
 // Rule 7: CPU architecture / manufacturer ↔ OS & GPU coherence
-fn check_cpu_coherence(fp: &FingerprintConfig, detected_os: Option<&Os>) -> Vec<FingerprintConflict> {
+fn check_cpu_coherence(
+    fp: &FingerprintConfig,
+    detected_os: Option<&Os>,
+) -> Vec<FingerprintConflict> {
     let mut conflicts = Vec::new();
     let arch = fp.cpu_arch.as_deref().map(str::to_ascii_lowercase);
     let maker = fp.cpu_manufacturer.as_deref().map(str::to_ascii_lowercase);
@@ -309,12 +312,18 @@ fn check_cpu_coherence(fp: &FingerprintConfig, detected_os: Option<&Os>) -> Vec<
     if let (Some(ref a), Some(ref m)) = (&arch, &maker) {
         if a == "x86" && (m == "apple" || m == "qualcomm") {
             conflicts.push(FingerprintConflict {
-                message: format!("CPU manufacturer \"{}\" requires ARM architecture, not x86.", m),
+                message: format!(
+                    "CPU manufacturer \"{}\" requires ARM architecture, not x86.",
+                    m
+                ),
             });
         }
         if a == "arm" && (m == "intel" || m == "amd") {
             conflicts.push(FingerprintConflict {
-                message: format!("CPU manufacturer \"{}\" requires x86 architecture, not ARM.", m),
+                message: format!(
+                    "CPU manufacturer \"{}\" requires x86 architecture, not ARM.",
+                    m
+                ),
             });
         }
     }

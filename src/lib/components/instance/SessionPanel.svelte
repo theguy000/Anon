@@ -99,7 +99,7 @@
 
         <div class="data-row">
           <div class="data-info">
-            <span class="data-label">Local storage</span>
+            <span class="data-label">Site storage (LS / IndexedDB)</span>
             <span class="data-value mono">
               {sessionInfo.local_storage_size != null ? formatBytes(sessionInfo.local_storage_size) : 'Empty'}
             </span>

@@ -384,7 +384,15 @@ mod tests {
             profile.into(),
         ];
         assert!(is_main_browser_cmdline("camoufox.exe", &main_cmd, profile));
-        assert!(!is_main_browser_cmdline("camoufox.exe", &child_cmd, profile));
-        assert!(!is_main_browser_cmdline("plugin-container.exe", &main_cmd, profile));
+        assert!(!is_main_browser_cmdline(
+            "camoufox.exe",
+            &child_cmd,
+            profile
+        ));
+        assert!(!is_main_browser_cmdline(
+            "plugin-container.exe",
+            &main_cmd,
+            profile
+        ));
     }
 }

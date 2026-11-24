@@ -193,7 +193,11 @@ pub fn infer_cpu_identity(
     }
 }
 
-fn pick_weighted<'a, T>(items: &'a [T], weight: impl Fn(&T) -> u32, rng: &mut StdRng) -> Option<&'a T> {
+fn pick_weighted<'a, T>(
+    items: &'a [T],
+    weight: impl Fn(&T) -> u32,
+    rng: &mut StdRng,
+) -> Option<&'a T> {
     let total: u32 = items.iter().map(&weight).sum();
     if total == 0 {
         return items.first();
@@ -209,7 +213,10 @@ fn pick_weighted<'a, T>(items: &'a [T], weight: impl Fn(&T) -> u32, rng: &mut St
     items.last()
 }
 
-fn draw_media_devices(target_os: &str, rng: &mut StdRng) -> serde_json::Map<String, serde_json::Value> {
+fn draw_media_devices(
+    target_os: &str,
+    rng: &mut StdRng,
+) -> serde_json::Map<String, serde_json::Value> {
     let catalog = load_media_devices();
     let pool = match target_os {
         "windows" => &catalog.win,
@@ -318,15 +325,42 @@ fn draw_media_devices(target_os: &str, rng: &mut StdRng) -> serde_json::Map<Stri
 
     let mut out = serde_json::Map::new();
     out.insert("mediaDevices:enabled".into(), serde_json::json!(true));
-    out.insert("mediaDevices:micros".into(), serde_json::json!(mic_labels.len()));
-    out.insert("mediaDevices:webcams".into(), serde_json::json!(cam_labels.len()));
-    out.insert("mediaDevices:speakers".into(), serde_json::json!(out_labels.len()));
-    out.insert("mediaDevices:microphoneLabels".into(), serde_json::json!(mic_labels));
-    out.insert("mediaDevices:microphoneGroups".into(), serde_json::json!(mic_groups));
-    out.insert("mediaDevices:webcamLabels".into(), serde_json::json!(cam_labels));
-    out.insert("mediaDevices:webcamGroups".into(), serde_json::json!(cam_groups));
-    out.insert("mediaDevices:speakerLabels".into(), serde_json::json!(out_labels));
-    out.insert("mediaDevices:speakerGroups".into(), serde_json::json!(out_groups));
+    out.insert(
+        "mediaDevices:micros".into(),
+        serde_json::json!(mic_labels.len()),
+    );
+    out.insert(
+        "mediaDevices:webcams".into(),
+        serde_json::json!(cam_labels.len()),
+    );
+    out.insert(
+        "mediaDevices:speakers".into(),
+        serde_json::json!(out_labels.len()),
+    );
+    out.insert(
+        "mediaDevices:microphoneLabels".into(),
+        serde_json::json!(mic_labels),
+    );
+    out.insert(
+        "mediaDevices:microphoneGroups".into(),
+        serde_json::json!(mic_groups),
+    );
+    out.insert(
+        "mediaDevices:webcamLabels".into(),
+        serde_json::json!(cam_labels),
+    );
+    out.insert(
+        "mediaDevices:webcamGroups".into(),
+        serde_json::json!(cam_groups),
+    );
+    out.insert(
+        "mediaDevices:speakerLabels".into(),
+        serde_json::json!(out_labels),
+    );
+    out.insert(
+        "mediaDevices:speakerGroups".into(),
+        serde_json::json!(out_groups),
+    );
     out
 }
 
@@ -536,11 +570,20 @@ pub fn generate_auto_bundle(
             } else {
                 ua.clone()
             };
-            config.insert("navigator.userAgent".into(), serde_json::Value::String(eff_ua.clone()));
-            config.insert("headers.User-Agent".into(), serde_json::Value::String(eff_ua));
+            config.insert(
+                "navigator.userAgent".into(),
+                serde_json::Value::String(eff_ua.clone()),
+            );
+            config.insert(
+                "headers.User-Agent".into(),
+                serde_json::Value::String(eff_ua),
+            );
         }
         if let Some(ref plat) = nav.platform {
-            config.insert("navigator.platform".into(), serde_json::Value::String(plat.clone()));
+            config.insert(
+                "navigator.platform".into(),
+                serde_json::Value::String(plat.clone()),
+            );
             match plat.as_str() {
                 "MacIntel" => {
                     config.insert(
@@ -567,7 +610,10 @@ pub fn generate_auto_bundle(
             }
         }
         if let Some(hc) = nav.hardware_concurrency {
-            config.insert("navigator.hardwareConcurrency".into(), serde_json::json!(hc));
+            config.insert(
+                "navigator.hardwareConcurrency".into(),
+                serde_json::json!(hc),
+            );
         }
         if let Some(mtp) = nav.max_touch_points {
             config.insert("navigator.maxTouchPoints".into(), serde_json::json!(mtp));
@@ -616,15 +662,29 @@ pub fn generate_auto_bundle(
 
         config.insert("window.outerWidth".into(), serde_json::json!(outer_w));
         config.insert("window.outerHeight".into(), serde_json::json!(outer_h));
-        config.insert("window.innerWidth".into(), serde_json::json!(outer_w.saturating_sub(16)));
-        config.insert("window.innerHeight".into(), serde_json::json!(outer_h.saturating_sub(86)));
+        config.insert(
+            "window.innerWidth".into(),
+            serde_json::json!(outer_w.saturating_sub(16)),
+        );
+        config.insert(
+            "window.innerHeight".into(),
+            serde_json::json!(outer_h.saturating_sub(86)),
+        );
 
         let max_x = avail_w.saturating_sub(outer_w);
         let max_y = avail_h.saturating_sub(outer_h);
         let (screen_x, screen_y) = if opts.change_window_size {
             (
-                if max_x > 0 { launch_rng.gen_range(0..=max_x) as i32 } else { 0 },
-                if max_y > 0 { launch_rng.gen_range(0..=max_y) as i32 } else { 0 },
+                if max_x > 0 {
+                    launch_rng.gen_range(0..=max_x) as i32
+                } else {
+                    0
+                },
+                if max_y > 0 {
+                    launch_rng.gen_range(0..=max_y) as i32
+                } else {
+                    0
+                },
             )
         } else {
             ((max_x / 2) as i32, (max_y / 2) as i32)
@@ -639,10 +699,16 @@ pub fn generate_auto_bundle(
         .and_then(|w| w.unmasked_renderer.as_deref());
     if let Some(ref webgl) = preset.webgl {
         if let Some(ref vendor) = webgl.unmasked_vendor {
-            config.insert("webGl:vendor".into(), serde_json::Value::String(vendor.clone()));
+            config.insert(
+                "webGl:vendor".into(),
+                serde_json::Value::String(vendor.clone()),
+            );
         }
         if let Some(ref renderer) = webgl.unmasked_renderer {
-            config.insert("webGl:renderer".into(), serde_json::Value::String(renderer.clone()));
+            config.insert(
+                "webGl:renderer".into(),
+                serde_json::Value::String(renderer.clone()),
+            );
         }
     }
 
@@ -659,10 +725,16 @@ pub fn generate_auto_bundle(
     config.insert("locale:language".into(), serde_json::json!(geo.language));
     config.insert("locale:region".into(), serde_json::json!(geo.region));
     config.insert("locale:all".into(), serde_json::json!(geo.locale_all));
-    config.insert("headers.Accept-Language".into(), serde_json::json!(geo.accept_language));
+    config.insert(
+        "headers.Accept-Language".into(),
+        serde_json::json!(geo.accept_language),
+    );
 
     let requested_locale = format!("{}-{}", geo.language, geo.region);
-    prefs.insert("intl.locale.requested".into(), serde_json::json!(requested_locale));
+    prefs.insert(
+        "intl.locale.requested".into(),
+        serde_json::json!(requested_locale),
+    );
 
     if let Some((lat, lon)) = geo.coordinates {
         config.insert("geolocation:latitude".into(), serde_json::json!(lat));
@@ -734,18 +806,28 @@ pub fn generate_auto_bundle(
 
     // Scrollbars & wheel parity
     let overlay_scrollbars = if target_os == "windows" {
-        if is_win11_fonts { 1 } else { 0 }
+        if is_win11_fonts {
+            1
+        } else {
+            0
+        }
     } else {
         1
     };
-    prefs.insert("ui.useOverlayScrollbars".into(), serde_json::json!(overlay_scrollbars));
+    prefs.insert(
+        "ui.useOverlayScrollbars".into(),
+        serde_json::json!(overlay_scrollbars),
+    );
     prefs.insert(
         "mousewheel.system_scroll_override.enabled".into(),
         serde_json::json!(target_os != "macos"),
     );
 
     if target_os == "windows" && host_os_name() != "windows" {
-        prefs.insert("javascript.options.use_ucrt_math".into(), serde_json::json!(true));
+        prefs.insert(
+            "javascript.options.use_ucrt_math".into(),
+            serde_json::json!(true),
+        );
         config.insert("input:windowsKeyboard".into(), serde_json::json!(true));
         prefs.insert(
             "widget.non-native-theme.scrollbar.style".into(),
@@ -877,7 +959,10 @@ mod audit {
             }
             assert!(out.prefs.contains_key("intl.locale.requested"));
             assert!(out.prefs.contains_key("general.cpu_identity"));
-            assert_eq!(out.prefs.get("permissions.default.geo"), Some(&serde_json::json!(1)));
+            assert_eq!(
+                out.prefs.get("permissions.default.geo"),
+                Some(&serde_json::json!(1))
+            );
 
             for (k, v) in &out.config {
                 seen.entry(k.clone()).or_default().insert(v.to_string());
@@ -927,7 +1012,10 @@ mod audit {
                 break;
             }
         }
-        assert!(any_diff, "regenerating identity nonce did not change identity");
+        assert!(
+            any_diff,
+            "regenerating identity nonce did not change identity"
+        );
     }
 
     #[test]
@@ -950,9 +1038,15 @@ mod audit {
             &geo,
         );
         assert_eq!(host_out.target_os, host_os_name());
-        assert!(!host_out.prefs.contains_key("privacy.baselineFingerprintingProtection.overrides"));
+        assert!(!host_out
+            .prefs
+            .contains_key("privacy.baselineFingerprintingProtection.overrides"));
 
-        let foreign_os = if host_os_name() == "windows" { "macos" } else { "windows" };
+        let foreign_os = if host_os_name() == "windows" {
+            "macos"
+        } else {
+            "windows"
+        };
         let foreign_out = generate_auto_bundle(
             &AutoFingerprintOptions {
                 auto_os: Some(foreign_os),
@@ -968,7 +1062,12 @@ mod audit {
             &geo,
         );
         assert_eq!(foreign_out.target_os, foreign_os);
-        assert!(foreign_out.prefs.contains_key("privacy.baselineFingerprintingProtection.overrides"));
-        assert_eq!(foreign_out.prefs.get("gfx.blacklist.webgpu"), Some(&serde_json::json!(4)));
+        assert!(foreign_out
+            .prefs
+            .contains_key("privacy.baselineFingerprintingProtection.overrides"));
+        assert_eq!(
+            foreign_out.prefs.get("gfx.blacklist.webgpu"),
+            Some(&serde_json::json!(4))
+        );
     }
 }
