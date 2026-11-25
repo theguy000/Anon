@@ -1,6 +1,5 @@
 use crate::instances::ProxyConfig;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProxyTestResult {
@@ -11,13 +10,6 @@ pub struct ProxyTestResult {
     pub latency_ms: Option<u64>,
     pub dns_leak: Option<bool>,
     pub error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct IpApiResponse {
-    ip: Option<String>,
-    country_name: Option<String>,
-    city: Option<String>,
 }
 
 pub fn percent_encode_userinfo(raw: &str) -> String {
@@ -97,54 +89,31 @@ pub fn reqwest_proxy(proxy_config: &ProxyConfig) -> Result<reqwest::Proxy, Strin
     reqwest::Proxy::all(&url).map_err(|e| format!("Invalid proxy URL: {}", e))
 }
 
+pub(crate) fn is_direct_proxy(proxy_config: &ProxyConfig) -> bool {
+    match proxy_config.proxy_type.as_deref().map(str::trim) {
+        None | Some("") => true,
+        Some(t) => t.eq_ignore_ascii_case("direct") || t.eq_ignore_ascii_case("none"),
+    }
+}
+
 pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, String> {
-    let proxy = reqwest_proxy(&proxy_config)?;
+    let direct = is_direct_proxy(&proxy_config);
+    let proxy_ref = if direct { None } else { Some(&proxy_config) };
+    if let Some(pc) = proxy_ref {
+        // Validate proxy configuration upfront so invalid URLs fail fast.
+        let _ = reqwest_proxy(pc)?;
+    }
 
-    let client = reqwest::Client::builder()
-        .proxy(proxy)
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let start = Instant::now();
-
-    match client.get("https://ipapi.co/json/").send().await {
-        Ok(response) => {
-            let latency = start.elapsed().as_millis() as u64;
-
-            if !response.status().is_success() {
-                return Ok(ProxyTestResult {
-                    success: false,
-                    ip: None,
-                    country: None,
-                    city: None,
-                    latency_ms: Some(latency),
-                    dns_leak: None,
-                    error: Some(format!("HTTP {}", response.status())),
-                });
-            }
-
-            match response.json::<IpApiResponse>().await {
-                Ok(data) => Ok(ProxyTestResult {
-                    success: true,
-                    ip: data.ip,
-                    country: data.country_name,
-                    city: data.city,
-                    latency_ms: Some(latency),
-                    dns_leak: Some(false),
-                    error: None,
-                }),
-                Err(_) => Ok(ProxyTestResult {
-                    success: true,
-                    ip: None,
-                    country: None,
-                    city: None,
-                    latency_ms: Some(latency),
-                    dns_leak: None,
-                    error: Some("Connected but failed to parse IP info".to_string()),
-                }),
-            }
-        }
+    match crate::geo::fetch_live_geo_with_rtt(proxy_ref).await {
+        Ok((data, rtt_ms)) => Ok(ProxyTestResult {
+            success: true,
+            ip: data.ip,
+            country: data.country_name.or(data.country_code),
+            city: data.city,
+            latency_ms: Some(rtt_ms),
+            dns_leak: if direct { None } else { Some(false) },
+            error: None,
+        }),
         Err(e) => Ok(ProxyTestResult {
             success: false,
             ip: None,
@@ -152,7 +121,7 @@ pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, St
             city: None,
             latency_ms: None,
             dns_leak: None,
-            error: Some(format!("Connection failed: {}", e)),
+            error: Some(e),
         }),
     }
 }
@@ -176,5 +145,24 @@ mod tests {
             "http://user%40realm:p%40ss%3Aw%23rd%2F1%3F%2520@proxy.example.com:8080"
         );
         assert!(reqwest_proxy(&cfg).is_ok());
+    }
+
+    #[test]
+    fn direct_proxy_detection_handles_none_empty_and_direct() {
+        assert!(is_direct_proxy(&ProxyConfig::default()));
+        assert!(is_direct_proxy(&ProxyConfig {
+            proxy_type: Some("direct".into()),
+            ..Default::default()
+        }));
+        assert!(is_direct_proxy(&ProxyConfig {
+            proxy_type: Some("".into()),
+            ..Default::default()
+        }));
+        assert!(!is_direct_proxy(&ProxyConfig {
+            proxy_type: Some("socks5".into()),
+            host: Some("127.0.0.1".into()),
+            port: Some(1080),
+            ..Default::default()
+        }));
     }
 }

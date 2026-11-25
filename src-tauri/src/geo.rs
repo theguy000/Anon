@@ -1,18 +1,20 @@
-//! Per-instance deterministic identity seeding and exit-IP geolocation binding.
+//! Per-instance deterministic identity seeding and live exit-IP geolocation binding.
 
-use crate::camoufox::{get_data_dir, write_json_atomic};
+use crate::camoufox::get_data_dir;
 use crate::instances::ProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
-const PROXY_CACHE_TTL_SECS: u64 = 6 * 3600;
-const DIRECT_CACHE_TTL_SECS: u64 = 3600;
+const GEO_PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
+const IPV6_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 static GEO_TABLE: OnceLock<HashMap<String, CountryProfile>> = OnceLock::new();
-static GEO_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static LEGACY_CACHE_CLEANED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Deserialize)]
 struct GeoTable {
@@ -26,8 +28,6 @@ struct CountryProfile {
     region: String,
     lat: f64,
     lon: f64,
-    #[serde(rename = "acceptLanguage")]
-    accept_language: String,
 }
 
 fn table() -> &'static HashMap<String, CountryProfile> {
@@ -59,31 +59,15 @@ pub fn identity_seed(instance_id: &str, nonce: u64) -> u64 {
     }
 }
 
-/// Credential-free cache key: hashes the proxy URL so passwords are never persisted to disk.
-pub fn geo_cache_key(proxy: Option<&ProxyConfig>) -> Result<String, String> {
-    match proxy {
-        Some(pc) => {
-            let url = crate::proxy_tester::proxy_url(pc)?;
-            Ok(format!("proxy:{:016x}", fnv1a64(url.as_bytes())))
-        }
-        None => Ok("direct".to_string()),
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GeoLookup {
     pub ip: Option<String>,
     pub country_name: Option<String>,
     pub country_code: Option<String>,
+    pub city: Option<String>,
     pub timezone: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct GeoCacheEntry {
-    lookup: GeoLookup,
-    cached_at: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -93,8 +77,8 @@ pub struct GeoContext {
     pub language: String,
     pub region: String,
     pub locale_all: String,
-    pub accept_language: String,
     pub coordinates: Option<(f64, f64)>,
+    pub ipv6_mismatch: bool,
 }
 
 fn find_country_profile(
@@ -116,8 +100,8 @@ fn find_country_profile(
     None
 }
 
-/// Build a coherent GeoContext from a real IP lookup when available, falling back
-/// to the bundled country table only for missing fields.
+/// Build a coherent GeoContext from a live IP lookup, falling back to the
+/// bundled country table only for missing fields.
 pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
     let h = fnv1a64(salt.as_bytes());
     let profile = find_country_profile(
@@ -125,13 +109,12 @@ pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
         lookup.country_code.as_deref(),
     );
 
-    let (language, region, locale_all, accept_language) = if let Some(p) = profile {
+    let (language, region, locale_all) = if let Some(p) = profile {
         let bare = p.language.split('-').next().unwrap_or("en").to_string();
         (
             bare.clone(),
             p.region.clone(),
             format!("{}, {}", p.language, bare),
-            p.accept_language.clone(),
         )
     } else if let Some(code) = lookup
         .country_code
@@ -143,14 +126,12 @@ pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
             "en".to_string(),
             upper.clone(),
             format!("en-{}, en", upper),
-            format!("en-{},en;q=0.9", upper),
         )
     } else {
         (
             "en".to_string(),
             "US".to_string(),
             "en-US, en".to_string(),
-            "en-US,en;q=0.9".to_string(),
         )
     };
 
@@ -194,9 +175,35 @@ pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
         language,
         region,
         locale_all,
-        accept_language,
         coordinates,
+        ipv6_mismatch: false,
     }
+}
+
+/// True when a direct IPv6 exit resolves to a different country or timezone
+/// than the direct IPv4 exit (for example, an IPv4-only VPN on a dual-stack ISP).
+pub fn ipv6_mismatches_ipv4(ipv4: &GeoContext, ipv6: &GeoLookup) -> bool {
+    if let Some(code) = ipv6
+        .country_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !code.eq_ignore_ascii_case(&ipv4.region) {
+            return true;
+        }
+    }
+    if let Some(tz) = ipv6
+        .timezone
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !ipv4.timezone.trim().is_empty() && !tz.eq_ignore_ascii_case(&ipv4.timezone) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -205,6 +212,7 @@ pub fn resolve(country: &str, salt: &str) -> GeoContext {
         ip: None,
         country_name: Some(country.to_string()),
         country_code: None,
+        city: None,
         timezone: None,
         latitude: None,
         longitude: None,
@@ -219,16 +227,54 @@ fn unknown() -> GeoContext {
         language: "en".into(),
         region: "US".into(),
         locale_all: "en-US, en".into(),
-        accept_language: "en-US,en;q=0.9".into(),
         coordinates: None,
+        ipv6_mismatch: false,
     }
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NumberOrString {
+    Num(f64),
+    Str(String),
+}
+
+impl NumberOrString {
+    fn as_f64(&self) -> Option<f64> {
+        match self {
+            NumberOrString::Num(v) if v.is_finite() => Some(*v),
+            NumberOrString::Str(s) => s.trim().parse::<f64>().ok().filter(|v| v.is_finite()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GeoJsResponse {
+    ip: Option<String>,
+    country: Option<String>,
+    country_code: Option<String>,
+    city: Option<String>,
+    timezone: Option<String>,
+    latitude: Option<NumberOrString>,
+    longitude: Option<NumberOrString>,
+}
+
+#[derive(Deserialize)]
+struct IpWhoIsTimezone {
+    id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IpWhoIsResponse {
+    success: Option<bool>,
+    ip: Option<String>,
+    country: Option<String>,
+    country_code: Option<String>,
+    city: Option<String>,
+    timezone: Option<IpWhoIsTimezone>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -236,148 +282,202 @@ struct IpApiCoResponse {
     ip: Option<String>,
     country_name: Option<String>,
     country_code: Option<String>,
+    city: Option<String>,
     timezone: Option<String>,
-    latitude: Option<f64>,
-    longitude: Option<f64>,
+    latitude: Option<NumberOrString>,
+    longitude: Option<NumberOrString>,
 }
 
-#[derive(Deserialize)]
-struct IpApiComResponse {
-    status: Option<String>,
-    query: Option<String>,
-    country: Option<String>,
-    #[serde(rename = "countryCode")]
-    country_code: Option<String>,
-    timezone: Option<String>,
-    lat: Option<f64>,
-    lon: Option<f64>,
+fn non_empty(val: Option<String>) -> Option<String> {
+    val.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
-async fn cache_path(app: &AppHandle) -> std::path::PathBuf {
-    get_data_dir(app).await.join("geo_cache.json")
-}
-
-pub(crate) fn read_cached_lookup(
-    path: &std::path::Path,
-    key: &str,
-    ttl_secs: u64,
-    now: u64,
-) -> Option<GeoLookup> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let map = serde_json::from_str::<HashMap<String, GeoCacheEntry>>(&text).ok()?;
-    let entry = map.get(key)?;
-    if now.saturating_sub(entry.cached_at) <= ttl_secs {
-        Some(entry.lookup.clone())
-    } else {
-        None
+pub(crate) fn parse_geojs(body: &str) -> Option<GeoLookup> {
+    let parsed: GeoJsResponse = serde_json::from_str(body).ok()?;
+    let country_name = non_empty(parsed.country);
+    let country_code = non_empty(parsed.country_code);
+    let timezone = non_empty(parsed.timezone);
+    if country_name.is_none() && country_code.is_none() && timezone.is_none() {
+        return None;
     }
+    Some(GeoLookup {
+        ip: non_empty(parsed.ip),
+        country_name,
+        country_code,
+        city: non_empty(parsed.city),
+        timezone,
+        latitude: parsed.latitude.as_ref().and_then(NumberOrString::as_f64),
+        longitude: parsed.longitude.as_ref().and_then(NumberOrString::as_f64),
+    })
 }
 
-pub(crate) fn write_cached_lookup(
-    path: &std::path::Path,
-    key: &str,
-    lookup: &GeoLookup,
-    now: u64,
-) -> Result<(), String> {
-    let _guard = GEO_CACHE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap();
-    let mut map = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<HashMap<String, GeoCacheEntry>>(&t).ok())
-        .unwrap_or_default();
-    map.insert(
-        key.to_string(),
-        GeoCacheEntry {
-            lookup: lookup.clone(),
-            cached_at: now,
-        },
-    );
-    write_json_atomic(path, &map)
+pub(crate) fn parse_ipwhois(body: &str) -> Option<GeoLookup> {
+    let parsed: IpWhoIsResponse = serde_json::from_str(body).ok()?;
+    if parsed.success != Some(true) {
+        return None;
+    }
+    let country_name = non_empty(parsed.country);
+    let country_code = non_empty(parsed.country_code);
+    let timezone = parsed.timezone.and_then(|tz| non_empty(tz.id));
+    if country_name.is_none() && country_code.is_none() && timezone.is_none() {
+        return None;
+    }
+    Some(GeoLookup {
+        ip: non_empty(parsed.ip),
+        country_name,
+        country_code,
+        city: non_empty(parsed.city),
+        timezone,
+        latitude: parsed.latitude.filter(|v| v.is_finite()),
+        longitude: parsed.longitude.filter(|v| v.is_finite()),
+    })
 }
 
-/// Resolve geo identity through the instance's proxy (or direct egress when unproxied).
+pub(crate) fn parse_ipapi_co(body: &str) -> Option<GeoLookup> {
+    let parsed: IpApiCoResponse = serde_json::from_str(body).ok()?;
+    let country_name = non_empty(parsed.country_name);
+    let country_code = non_empty(parsed.country_code);
+    let timezone = non_empty(parsed.timezone);
+    if country_name.is_none() && country_code.is_none() && timezone.is_none() {
+        return None;
+    }
+    Some(GeoLookup {
+        ip: non_empty(parsed.ip),
+        country_name,
+        country_code,
+        city: non_empty(parsed.city),
+        timezone,
+        latitude: parsed.latitude.as_ref().and_then(NumberOrString::as_f64),
+        longitude: parsed.longitude.as_ref().and_then(NumberOrString::as_f64),
+    })
+}
+
+async fn fetch_url_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "Anon/0.1")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.text().await.map_err(|e| e.to_string())
+}
+
+type ProviderSpec = (&'static str, &'static str, fn(&str) -> Option<GeoLookup>);
+
+const DIRECT_PROVIDERS: &[ProviderSpec] = &[
+    // Direct launches query IPv4-only first so dual-stack OS preference does not
+    // resolve an IPv4-only VPN via a leaked ISP IPv6 address.
+    ("ipv4.geojs", "https://ipv4.geojs.io/v1/ip/geo.json", parse_geojs),
+    ("geojs", "https://get.geojs.io/v1/ip/geo.json", parse_geojs),
+    ("ipwho.is", "https://ipwho.is/", parse_ipwhois),
+    ("ipapi.co", "https://ipapi.co/json/", parse_ipapi_co),
+];
+
+const PROXIED_PROVIDERS: &[ProviderSpec] = &[
+    ("geojs", "https://get.geojs.io/v1/ip/geo.json", parse_geojs),
+    ("ipwho.is", "https://ipwho.is/", parse_ipwhois),
+    ("ipapi.co", "https://ipapi.co/json/", parse_ipapi_co),
+];
+
+/// Fetch live exit-IP geolocation over HTTPS without caching and return the
+/// lookup alongside the succeeding provider's RTT in milliseconds.
+pub async fn fetch_live_geo_with_rtt(
+    proxy: Option<&ProxyConfig>,
+) -> Result<(GeoLookup, u64), String> {
+    let mut builder = reqwest::Client::builder().timeout(GEO_PROVIDER_TIMEOUT);
+    if let Some(pc) = proxy {
+        builder = builder.proxy(crate::proxy_tester::reqwest_proxy(pc)?);
+    }
+    let client = builder
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let providers = if proxy.is_none() {
+        DIRECT_PROVIDERS
+    } else {
+        PROXIED_PROVIDERS
+    };
+
+    let mut errors: Vec<String> = Vec::new();
+    for &(name, url, parser) in providers {
+        let started = Instant::now();
+        match fetch_url_text(&client, url).await {
+            Ok(body) => {
+                if let Some(lookup) = parser(&body) {
+                    return Ok((lookup, started.elapsed().as_millis() as u64));
+                }
+                errors.push(format!("{}: invalid response", name));
+            }
+            Err(e) => errors.push(format!("{}: {}", name, e)),
+        }
+    }
+
+    Err(format!("Geo lookup failed ({})", errors.join("; ")))
+}
+
+async fn check_direct_ipv6_mismatch(ipv4: &GeoContext) -> bool {
+    let is_ipv4_exit = ipv4
+        .exit_ip
+        .as_deref()
+        .and_then(|ip| ip.parse::<IpAddr>().ok())
+        .is_some_and(|ip| ip.is_ipv4());
+    if !is_ipv4_exit {
+        return false;
+    }
+
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(IPV6_PROBE_TIMEOUT)
+        .build()
+    else {
+        return false;
+    };
+
+    let Ok(body) = fetch_url_text(&client, "https://ipv6.geojs.io/v1/ip/geo.json").await else {
+        return false;
+    };
+
+    let Some(ipv6_lookup) = parse_geojs(&body) else {
+        return false;
+    };
+    let is_ipv6_exit = ipv6_lookup
+        .ip
+        .as_deref()
+        .and_then(|ip| ip.parse::<IpAddr>().ok())
+        .is_some_and(|ip| ip.is_ipv6());
+    if !is_ipv6_exit {
+        return false;
+    }
+
+    ipv6_mismatches_ipv4(ipv4, &ipv6_lookup)
+}
+
+/// Resolve live geo identity through the instance's proxy (or direct/VPN egress).
 pub async fn for_instance(
     app: &AppHandle,
     instance_id: &str,
     proxy: Option<&ProxyConfig>,
 ) -> GeoContext {
-    match fetch_geo(app, proxy).await {
-        Some(lookup) => resolve_from_lookup(&lookup, instance_id),
-        None => unknown(),
-    }
-}
-
-async fn fetch_geo(app: &AppHandle, proxy: Option<&ProxyConfig>) -> Option<GeoLookup> {
-    let key = geo_cache_key(proxy).ok()?;
-    let ttl = if proxy.is_some() {
-        PROXY_CACHE_TTL_SECS
-    } else {
-        DIRECT_CACHE_TTL_SECS
-    };
-    let path = cache_path(app).await;
-    let now = now_secs();
-
-    if let Some(cached) = read_cached_lookup(&path, &key, ttl, now) {
-        return Some(cached);
+    if !LEGACY_CACHE_CLEANED.swap(true, Ordering::Relaxed) {
+        let legacy = get_data_dir(app).await.join("geo_cache.json");
+        let _ = std::fs::remove_file(legacy);
     }
 
-    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
-    if let Some(pc) = proxy {
-        builder = builder.proxy(crate::proxy_tester::reqwest_proxy(pc).ok()?);
+    match fetch_live_geo_with_rtt(proxy).await {
+        Ok((lookup, _)) => {
+            let mut ctx = resolve_from_lookup(&lookup, instance_id);
+            if proxy.is_none() {
+                ctx.ipv6_mismatch = check_direct_ipv6_mismatch(&ctx).await;
+            }
+            ctx
+        }
+        Err(err) => {
+            eprintln!("Live geo lookup failed for instance {}: {}", instance_id, err);
+            unknown()
+        }
     }
-    let client = builder.build().ok()?;
-
-    let lookup = match fetch_from_ipapi_co(&client).await {
-        Some(found) => found,
-        None => fetch_from_ip_api_com(&client).await?,
-    };
-
-    let _ = write_cached_lookup(&path, &key, &lookup, now);
-    Some(lookup)
-}
-
-async fn fetch_from_ipapi_co(client: &reqwest::Client) -> Option<GeoLookup> {
-    let resp = client.get("https://ipapi.co/json/").send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let parsed = resp.json::<IpApiCoResponse>().await.ok()?;
-    if parsed.country_name.is_none() && parsed.country_code.is_none() && parsed.timezone.is_none() {
-        return None;
-    }
-    Some(GeoLookup {
-        ip: parsed.ip,
-        country_name: parsed.country_name,
-        country_code: parsed.country_code,
-        timezone: parsed.timezone,
-        latitude: parsed.latitude,
-        longitude: parsed.longitude,
-    })
-}
-
-async fn fetch_from_ip_api_com(client: &reqwest::Client) -> Option<GeoLookup> {
-    let resp = client
-        .get("http://ip-api.com/json?fields=status,query,country,countryCode,timezone,lat,lon")
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let parsed = resp.json::<IpApiComResponse>().await.ok()?;
-    if parsed.status.as_deref() != Some("success") {
-        return None;
-    }
-    Some(GeoLookup {
-        ip: parsed.query,
-        country_name: parsed.country,
-        country_code: parsed.country_code,
-        timezone: parsed.timezone,
-        latitude: parsed.lat,
-        longitude: parsed.lon,
-    })
 }
 
 #[cfg(test)]
@@ -396,37 +496,94 @@ mod tests {
     }
 
     #[test]
-    fn geo_cache_key_hashes_proxy_credentials_and_respects_ttl() {
-        let proxy = ProxyConfig {
-            proxy_type: Some("socks5".into()),
-            host: Some("proxy.secret.net".into()),
-            port: Some(1080),
-            username: Some("myuser".into()),
-            password: Some("supersecretpass".into()),
-        };
-        let key = geo_cache_key(Some(&proxy)).unwrap();
-        assert!(key.starts_with("proxy:"));
-        assert!(!key.contains("myuser"));
-        assert!(!key.contains("supersecretpass"));
-        assert!(!key.contains("proxy.secret.net"));
+    fn parses_geojs_ipwhois_and_ipapi_co_payloads() {
+        let geojs = r#"{
+            "ip": "180.149.230.197",
+            "country": "Japan",
+            "country_code": "JP",
+            "city": "Tokyo",
+            "timezone": "Asia/Tokyo",
+            "latitude": "35.6893",
+            "longitude": "139.6899"
+        }"#;
+        let g = parse_geojs(geojs).expect("geojs should parse");
+        assert_eq!(g.ip.as_deref(), Some("180.149.230.197"));
+        assert_eq!(g.country_name.as_deref(), Some("Japan"));
+        assert_eq!(g.country_code.as_deref(), Some("JP"));
+        assert_eq!(g.city.as_deref(), Some("Tokyo"));
+        assert_eq!(g.timezone.as_deref(), Some("Asia/Tokyo"));
+        assert_eq!(g.latitude, Some(35.6893));
+        assert_eq!(g.longitude, Some(139.6899));
 
-        let tmp =
-            std::env::temp_dir().join(format!("anon_geo_cache_{}.json", uuid::Uuid::new_v4()));
-        let lookup = GeoLookup {
-            ip: Some("203.0.113.10".into()),
-            country_name: Some("Germany".into()),
-            country_code: Some("DE".into()),
-            timezone: Some("Europe/Berlin".into()),
-            latitude: Some(52.52),
-            longitude: Some(13.405),
-        };
-        write_cached_lookup(&tmp, &key, &lookup, 1000).unwrap();
-        let disk_text = std::fs::read_to_string(&tmp).unwrap();
-        assert!(!disk_text.contains("supersecretpass"));
+        let ipwhois = r#"{
+            "success": true,
+            "ip": "180.149.230.197",
+            "country": "Japan",
+            "country_code": "JP",
+            "city": "Tokyo",
+            "timezone": { "id": "Asia/Tokyo", "abbr": "JST" },
+            "latitude": 35.6895,
+            "longitude": 139.6917
+        }"#;
+        let w = parse_ipwhois(ipwhois).expect("ipwho.is should parse");
+        assert_eq!(w.timezone.as_deref(), Some("Asia/Tokyo"));
+        assert_eq!(w.country_code.as_deref(), Some("JP"));
+        assert_eq!(w.city.as_deref(), Some("Tokyo"));
 
-        assert!(read_cached_lookup(&tmp, &key, 600, 1500).is_some());
-        assert!(read_cached_lookup(&tmp, &key, 600, 1601).is_none());
-        let _ = std::fs::remove_file(&tmp);
+        let ipwhois_fail = r#"{"success": false, "message": "rate limited"}"#;
+        assert!(parse_ipwhois(ipwhois_fail).is_none());
+
+        let ipapi = r#"{
+            "ip": "198.51.100.7",
+            "country_name": "Germany",
+            "country_code": "DE",
+            "city": "Berlin",
+            "timezone": "Europe/Berlin",
+            "latitude": 52.52,
+            "longitude": 13.405
+        }"#;
+        let a = parse_ipapi_co(ipapi).expect("ipapi.co should parse");
+        assert_eq!(a.country_name.as_deref(), Some("Germany"));
+        assert_eq!(a.city.as_deref(), Some("Berlin"));
+        assert_eq!(a.timezone.as_deref(), Some("Europe/Berlin"));
+    }
+
+    #[test]
+    fn ipv6_mismatch_detects_country_or_timezone_leak_past_vpn() {
+        let japan_vpn = resolve_from_lookup(
+            &GeoLookup {
+                ip: Some("180.149.230.197".into()),
+                country_name: Some("Japan".into()),
+                country_code: Some("JP".into()),
+                city: Some("Tokyo".into()),
+                timezone: Some("Asia/Tokyo".into()),
+                latitude: Some(35.6893),
+                longitude: Some(139.6899),
+            },
+            "inst-1",
+        );
+
+        let isp_ipv6_bd = GeoLookup {
+            ip: Some("2400:1234::1".into()),
+            country_name: Some("Bangladesh".into()),
+            country_code: Some("BD".into()),
+            city: Some("Dhaka".into()),
+            timezone: Some("Asia/Dhaka".into()),
+            latitude: Some(23.78),
+            longitude: Some(90.41),
+        };
+        assert!(ipv6_mismatches_ipv4(&japan_vpn, &isp_ipv6_bd));
+
+        let vpn_ipv6_jp = GeoLookup {
+            ip: Some("2404:6800::1".into()),
+            country_name: Some("Japan".into()),
+            country_code: Some("JP".into()),
+            city: Some("Tokyo".into()),
+            timezone: Some("Asia/Tokyo".into()),
+            latitude: Some(35.69),
+            longitude: Some(139.69),
+        };
+        assert!(!ipv6_mismatches_ipv4(&japan_vpn, &vpn_ipv6_jp));
     }
 
     #[test]
@@ -435,6 +592,7 @@ mod tests {
             ip: Some("198.51.100.7".into()),
             country_name: Some("United States".into()),
             country_code: Some("US".into()),
+            city: Some("Chicago".into()),
             timezone: Some("America/Chicago".into()),
             latitude: Some(41.8781),
             longitude: Some(-87.6298),
@@ -465,7 +623,7 @@ mod tests {
         assert!(!g.timezone.is_empty());
         assert!(!g.language.is_empty());
         assert!(!g.region.is_empty());
-        assert!(!g.accept_language.is_empty());
+        assert!(!g.locale_all.is_empty());
         assert!(g.coordinates.is_none());
     }
 }

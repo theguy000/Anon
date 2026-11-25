@@ -65,8 +65,24 @@
   let globalCategory = "";
   let globalPresetIndex = -1;
 
+  const AUTO_LANGUAGE_OPTIONS = [
+    { value: "en-US", label: "English (en-US)" },
+    { value: "geo", label: "Match exit IP" },
+    { value: "en-GB", label: "English (en-GB)" },
+    { value: "ja-JP", label: "Japanese (ja-JP)" },
+    { value: "de-DE", label: "German (de-DE)" },
+    { value: "fr-FR", label: "French (fr-FR)" },
+    { value: "es-ES", label: "Spanish (es-ES)" },
+    { value: "pt-BR", label: "Portuguese (pt-BR)" },
+    { value: "nl-NL", label: "Dutch (nl-NL)" },
+    { value: "ko-KR", label: "Korean (ko-KR)" },
+    { value: "zh-CN", label: "Chinese (zh-CN)" },
+    { value: "bn-BD", label: "Bangla (bn-BD)" },
+  ];
+
   let autoMode = true;
   let autoOs = "host";
+  let autoLanguage = "en-US";
   let autoChangeWindowSize = true;
   let autoWindowPresetIndex = -1;
 
@@ -112,6 +128,7 @@
         globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
         autoMode = instance.fingerprint?.auto_fingerprint !== false;
         autoOs = instance.fingerprint?.auto_os ?? "host";
+        autoLanguage = instance.fingerprint?.auto_language?.trim() || "en-US";
         autoChangeWindowSize = instance.fingerprint?.auto_change_window_size !== false;
         autoWindowPresetIndex = WINDOW_PRESETS.findIndex(
           (p) =>
@@ -190,6 +207,7 @@
       fp.global_preset_index = globalPresetIndex >= 0 ? globalPresetIndex : null;
       fp.auto_fingerprint = autoMode;
       fp.auto_os = autoMode ? (autoOs === "host" ? null : autoOs) : null;
+      fp.auto_language = autoMode ? (autoLanguage === "en-US" ? null : autoLanguage) : null;
       fp.auto_change_window_size = autoMode ? autoChangeWindowSize : null;
       if (autoMode) {
         const preset =
@@ -232,7 +250,12 @@
       notes = "";
       instanceTags = [];
     } else {
-      fp = { auto_fingerprint: true, auto_os: null, auto_change_window_size: true };
+      fp = {
+        auto_fingerprint: true,
+        auto_os: null,
+        auto_language: null,
+        auto_change_window_size: true,
+      };
       selectedScreenPreset = "";
       selectedWebglPreset = "";
       selectedLocale = "";
@@ -241,6 +264,7 @@
       globalPresetIndex = -1;
       autoMode = true;
       autoOs = "host";
+      autoLanguage = "en-US";
       autoChangeWindowSize = true;
       autoWindowPresetIndex = -1;
     }
@@ -323,6 +347,28 @@
                   <option value="windows">Windows</option>
                   <option value="macos">macOS</option>
                   <option value="linux">Linux</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-title-row">
+                <label class="setting-label" for="auto-lang-select">Language</label>
+                <button
+                  type="button"
+                  class="tip"
+                  aria-label="Controls browser UI and website language. Timezone and geolocation always follow your live VPN or proxy."
+                  data-tip="Controls browser UI and website language. Timezone and geolocation always follow your live VPN or proxy."
+                >?</button>
+              </div>
+              <div class="setting-control w210">
+                <select id="auto-lang-select" class="input-field" bind:value={autoLanguage}>
+                  {#each AUTO_LANGUAGE_OPTIONS as opt}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
+                  {#if !AUTO_LANGUAGE_OPTIONS.some((o) => o.value === autoLanguage)}
+                    <option value={autoLanguage}>{autoLanguage}</option>
+                  {/if}
                 </select>
               </div>
             </div>
@@ -467,7 +513,11 @@
                   type="checkbox"
                   checked={fp.network_ipv4_only ?? false}
                   on:change={(e) =>
-                    (fp = setBool(fp, "network_ipv4_only", (e.target as HTMLInputElement).checked))}
+                    (fp = setBool(
+                      fp,
+                      "network_ipv4_only",
+                      (e.target as HTMLInputElement).checked ? true : null
+                    ))}
                 />
                 <span class="slider"></span>
               </label>

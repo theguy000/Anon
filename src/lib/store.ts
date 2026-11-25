@@ -113,6 +113,7 @@ export interface FingerprintConfig {
 
   auto_fingerprint?: boolean | null;
   auto_os?: string | null;
+  auto_language?: string | null;
   auto_change_window_size?: boolean | null;
   identity_nonce?: number | null;
 }

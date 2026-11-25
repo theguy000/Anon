@@ -364,7 +364,51 @@ fn draw_media_devices(
     out
 }
 
-fn generate_font_subset(target_os: &str, rng: &mut StdRng) -> Vec<String> {
+fn host_has_win11_fonts() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".to_string());
+        std::path::Path::new(&windir)
+            .join("Fonts")
+            .join("SegUIVar.ttf")
+            .is_file()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+fn generate_font_subset(
+    target_os: &str,
+    native_host: bool,
+    host_win11: bool,
+    rng: &mut StdRng,
+) -> Vec<String> {
+    // Camoufox v159 disables bundled fonts on native Windows/macOS identities
+    // so only OS-shipped base fonts should be claimed; uninstalled optional
+    // additions would fall back when measured by a page.
+    if native_host && target_os == "windows" {
+        let mut base: Vec<String> = ESSENTIAL_FONTS_WINDOWS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        if host_win11 {
+            for &f in WINDOWS_11_MARKER_FONTS {
+                if !base.iter().any(|existing| existing == f) {
+                    base.push(f.to_string());
+                }
+            }
+        }
+        return base;
+    }
+    if native_host && target_os == "macos" {
+        return ESSENTIAL_FONTS_MACOS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+    }
+
     let fonts_data = load_fonts();
 
     let os_key = match target_os {
@@ -423,58 +467,265 @@ fn generate_font_subset(target_os: &str, rng: &mut StdRng) -> Vec<String> {
     result
 }
 
-fn generate_voice_subset(target_os: &str, rng: &mut StdRng) -> Vec<String> {
-    let voices_data = load_voices();
+struct ParsedVoice<'a> {
+    name: &'a str,
+    lang: &'a str,
+    is_local: bool,
+}
+
+fn parse_voice_entry(entry: &str) -> Option<ParsedVoice<'_>> {
+    let mut parts = entry.splitn(3, ':');
+    let name = parts.next()?.trim();
+    let lang = parts.next()?.trim();
+    if name.is_empty() || lang.is_empty() {
+        return None;
+    }
+    let is_local = parts.next().is_none_or(|t| t.trim() == "local");
+    Some(ParsedVoice {
+        name,
+        lang,
+        is_local,
+    })
+}
+
+fn voice_to_json(v: &ParsedVoice<'_>, is_default: bool) -> serde_json::Value {
+    serde_json::json!({
+        "name": v.name,
+        "lang": v.lang,
+        "voiceUri": v.name,
+        "isDefault": is_default,
+        "isLocalService": v.is_local,
+    })
+}
+
+fn build_locale_voices(
+    target_os: &str,
+    requested_locale: &str,
+    rng: &mut StdRng,
+) -> Vec<serde_json::Value> {
     let os_key = match target_os {
         "macos" => "mac",
         "windows" => "win",
-        "linux" => "lin",
-        other => other,
+        _ => return Vec::new(),
     };
-
-    let full_list = match voices_data.get(os_key) {
-        Some(list) => list,
-        None => return Vec::new(),
+    let Some(raw_list) = load_voices().get(os_key) else {
+        return Vec::new();
     };
-
-    if full_list.is_empty() {
+    let parsed: Vec<ParsedVoice<'_>> = raw_list
+        .iter()
+        .filter_map(|e| parse_voice_entry(e))
+        .collect();
+    if parsed.is_empty() {
         return Vec::new();
     }
 
-    let voice_names: Vec<String> = full_list
-        .iter()
-        .filter_map(|entry| entry.split(':').next().map(String::from))
-        .collect();
+    let primary_lang = requested_locale
+        .split('-')
+        .next()
+        .unwrap_or("en")
+        .to_ascii_lowercase();
 
     if target_os == "windows" {
-        return voice_names;
+        let mut matched: Vec<&ParsedVoice<'_>> = parsed
+            .iter()
+            .filter(|v| v.lang.eq_ignore_ascii_case(requested_locale))
+            .collect();
+        if matched.is_empty() {
+            if let Some(first_region_lang) = parsed
+                .iter()
+                .find(|v| {
+                    v.lang
+                        .split('-')
+                        .next()
+                        .is_some_and(|l| l.eq_ignore_ascii_case(&primary_lang))
+                })
+                .map(|v| v.lang)
+            {
+                matched = parsed
+                    .iter()
+                    .filter(|v| v.lang.eq_ignore_ascii_case(first_region_lang))
+                    .collect();
+            }
+        }
+        if matched.is_empty() {
+            matched = parsed
+                .iter()
+                .filter(|v| v.lang.eq_ignore_ascii_case("en-US"))
+                .collect();
+        }
+
+        // Prefer modern OneCore voices over legacy Desktop/Anna voices when both exist.
+        let modern: Vec<&ParsedVoice<'_>> = matched
+            .iter()
+            .copied()
+            .filter(|v| !v.name.contains("Desktop") && !v.name.contains("Anna"))
+            .collect();
+        let chosen = if !modern.is_empty() { modern } else { matched };
+
+        return chosen
+            .into_iter()
+            .enumerate()
+            .map(|(idx, v)| voice_to_json(v, idx == 0))
+            .collect();
+    }
+
+    // macOS ships a multi-language system voice set whose default voice matches the UI locale.
+    let mut chosen: Vec<&ParsedVoice<'_>> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+
+    for v in parsed
+        .iter()
+        .filter(|v| v.lang.eq_ignore_ascii_case(requested_locale))
+    {
+        if seen.insert(v.name) {
+            chosen.push(v);
+        }
+    }
+    if chosen.is_empty() {
+        for v in parsed.iter().filter(|v| {
+            v.lang
+                .split('-')
+                .next()
+                .is_some_and(|l| l.eq_ignore_ascii_case(&primary_lang))
+        }) {
+            if seen.insert(v.name) {
+                chosen.push(v);
+            }
+        }
+    }
+    if chosen.is_empty() {
+        for v in parsed
+            .iter()
+            .filter(|v| v.lang.eq_ignore_ascii_case("en-US"))
+        {
+            if seen.insert(v.name) {
+                chosen.push(v);
+            }
+        }
     }
 
     let essential: HashSet<&str> = ESSENTIAL_VOICES_MACOS.iter().copied().collect();
-    let mut result: Vec<String> = voice_names
-        .iter()
-        .filter(|v| essential.contains(v.as_str()))
-        .cloned()
-        .collect();
-    let non_essential: Vec<&String> = voice_names
-        .iter()
-        .filter(|v| !essential.contains(v.as_str()))
-        .collect();
-
-    let pct = rng.gen_range(40..=80);
-    let count = (pct as f64 / 100.0 * non_essential.len() as f64).round() as usize;
-
-    let mut indices: Vec<usize> = (0..non_essential.len()).collect();
-    indices.shuffle(rng);
-    for &idx in indices.iter().take(count) {
-        result.push(non_essential[idx].clone());
+    for v in parsed.iter().filter(|v| essential.contains(v.name)) {
+        if seen.insert(v.name) {
+            chosen.push(v);
+        }
     }
 
-    result
+    let remaining: Vec<&ParsedVoice<'_>> =
+        parsed.iter().filter(|v| !seen.contains(v.name)).collect();
+    let pct = rng.gen_range(40..=70);
+    let count = (pct as f64 / 100.0 * remaining.len() as f64).round() as usize;
+    let mut indices: Vec<usize> = (0..remaining.len()).collect();
+    indices.shuffle(rng);
+    for &idx in indices.iter().take(count) {
+        let v = remaining[idx];
+        if seen.insert(v.name) {
+            chosen.push(v);
+        }
+    }
+
+    chosen
+        .into_iter()
+        .enumerate()
+        .map(|(idx, v)| voice_to_json(v, idx == 0))
+        .collect()
+}
+
+fn is_valid_region_subtag(region: &str) -> bool {
+    (region.len() == 2 && region.chars().all(|c| c.is_ascii_alphabetic()))
+        || (region.len() == 3 && region.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn format_script_subtag(script: &str) -> String {
+    let mut chars = script.chars();
+    match chars.next() {
+        Some(first) => format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            chars.as_str().to_ascii_lowercase()
+        ),
+        None => String::new(),
+    }
+}
+
+/// Resolve Auto-mode `(language, region, script, locale_all, requested_locale)`:
+/// - `None` or blank -> `"en-US"` (readable English default)
+/// - `"geo"` -> live exit IP country's locale
+/// - `"lang-REGION"` or `"lang-Script-REGION"` -> explicit locale tag
+pub fn resolve_auto_locale(
+    auto_language: Option<&str>,
+    geo: &crate::geo::GeoContext,
+) -> (String, String, Option<String>, String, String) {
+    let raw = auto_language.map(str::trim).unwrap_or("");
+    if raw.is_empty() {
+        return (
+            "en".into(),
+            "US".into(),
+            None,
+            "en-US, en".into(),
+            "en-US".into(),
+        );
+    }
+    if raw.eq_ignore_ascii_case("geo") {
+        let primary = geo
+            .locale_all
+            .split(',')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}-{}", geo.language, geo.region));
+        return (
+            geo.language.clone(),
+            geo.region.clone(),
+            None,
+            geo.locale_all.clone(),
+            primary,
+        );
+    }
+
+    let normalized = raw.replace('_', "-");
+    let parts: Vec<&str> = normalized.split('-').collect();
+    match parts.as_slice() {
+        [lang, region] => {
+            let lang_ok =
+                (2..=3).contains(&lang.len()) && lang.chars().all(|c| c.is_ascii_alphabetic());
+            if lang_ok && is_valid_region_subtag(region) {
+                let l = lang.to_ascii_lowercase();
+                let r = region.to_ascii_uppercase();
+                let requested = format!("{}-{}", l, r);
+                let locale_all = format!("{}, {}", requested, l);
+                return (l, r, None, locale_all, requested);
+            }
+        }
+        [lang, script, region] => {
+            let lang_ok =
+                (2..=3).contains(&lang.len()) && lang.chars().all(|c| c.is_ascii_alphabetic());
+            let script_ok = script.len() == 4 && script.chars().all(|c| c.is_ascii_alphabetic());
+            if lang_ok && script_ok && is_valid_region_subtag(region) {
+                let l = lang.to_ascii_lowercase();
+                let s = format_script_subtag(script);
+                let r = region.to_ascii_uppercase();
+                let requested = format!("{}-{}-{}", l, s, r);
+                let locale_all = format!("{}, {}-{}, {}", requested, l, r, l);
+                return (l, r, Some(s), locale_all, requested);
+            }
+        }
+        _ => {}
+    }
+
+    (
+        "en".into(),
+        "US".into(),
+        None,
+        "en-US, en".into(),
+        "en-US".into(),
+    )
 }
 
 pub struct AutoFingerprintOptions<'a> {
     pub auto_os: Option<&'a str>,
+    pub auto_language: Option<&'a str>,
     pub change_window_size: bool,
     pub default_outer_width: Option<u32>,
     pub default_outer_height: Option<u32>,
@@ -690,6 +941,16 @@ pub fn generate_auto_bundle(
         };
         config.insert("window.screenX".into(), serde_json::json!(screen_x));
         config.insert("window.screenY".into(), serde_json::json!(screen_y));
+
+        let dpr = screen
+            .device_pixel_ratio
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(if target_os == "macos" { 2.0 } else { 1.0 });
+        config.insert("window.devicePixelRatio".into(), serde_json::json!(dpr));
+        prefs.insert(
+            "layout.css.devPixelsPerPx".into(),
+            serde_json::json!(format!("{}", dpr)),
+        );
     }
 
     let webgl_renderer = preset
@@ -719,15 +980,14 @@ pub fn generate_auto_bundle(
     }
 
     config.insert("timezone".into(), serde_json::json!(geo.timezone));
-    config.insert("locale:language".into(), serde_json::json!(geo.language));
-    config.insert("locale:region".into(), serde_json::json!(geo.region));
-    config.insert("locale:all".into(), serde_json::json!(geo.locale_all));
-    config.insert(
-        "headers.Accept-Language".into(),
-        serde_json::json!(geo.accept_language),
-    );
-
-    let requested_locale = format!("{}-{}", geo.language, geo.region);
+    let (locale_lang, locale_region, locale_script, locale_all, requested_locale) =
+        resolve_auto_locale(opts.auto_language, geo);
+    config.insert("locale:language".into(), serde_json::json!(locale_lang));
+    config.insert("locale:region".into(), serde_json::json!(locale_region));
+    if let Some(ref script) = locale_script {
+        config.insert("locale:script".into(), serde_json::json!(script));
+    }
+    config.insert("locale:all".into(), serde_json::json!(locale_all));
     prefs.insert(
         "intl.locale.requested".into(),
         serde_json::json!(requested_locale),
@@ -749,7 +1009,13 @@ pub fn generate_auto_bundle(
         }
     }
 
-    let fonts = generate_font_subset(target_os, &mut rng);
+    if geo.ipv6_mismatch {
+        config.insert("network:ipv4Only".into(), serde_json::json!(true));
+    }
+
+    let native_host = target_os == host_os_name();
+    let host_win11 = native_host && target_os == "windows" && host_has_win11_fonts();
+    let fonts = generate_font_subset(target_os, native_host, host_win11, &mut rng);
     let is_win11_fonts = target_os == "windows"
         && (fonts.is_empty()
             || fonts
@@ -759,34 +1025,9 @@ pub fn generate_auto_bundle(
         config.insert("fonts".into(), serde_json::json!(fonts));
     }
 
-    // Deterministic speech voices + fail-closed guard so host SAPI/NSSpeech voices never leak
-    if let Some(ref speech_voices) = preset.speech_voices {
-        let voice_subset = generate_voice_subset(target_os, &mut rng);
-        let voice_arr: Vec<serde_json::Value> = speech_voices
-            .iter()
-            .filter(|entry| {
-                let name = entry.split(':').next().unwrap_or("");
-                voice_subset.iter().any(|v| v == name)
-            })
-            .enumerate()
-            .map(|(filtered_idx, entry)| {
-                let parts: Vec<&str> = entry.splitn(3, ':').collect();
-                let name = parts.first().unwrap_or(&"").to_string();
-                let lang = parts.get(1).unwrap_or(&"").to_string();
-                let voice_uri = name.clone();
-                serde_json::json!({
-                    "name": name,
-                    "lang": lang,
-                    "voiceUri": voice_uri,
-                    "isDefault": filtered_idx == 0,
-                    "isLocalService": parts.get(2).is_none_or(|t| *t == "local")
-                })
-            })
-            .collect();
-        config.insert("voices".into(), serde_json::Value::Array(voice_arr));
-    } else {
-        config.insert("voices".into(), serde_json::Value::Array(Vec::new()));
-    }
+    // Locale-matched speech voices + fail-closed guard so host SAPI/NSSpeech voices never leak
+    let voice_arr = build_locale_voices(target_os, &requested_locale, &mut rng);
+    config.insert("voices".into(), serde_json::Value::Array(voice_arr));
     config.insert("voices:blockIfNotDefined".into(), serde_json::json!(true));
 
     for (k, v) in draw_media_devices(target_os, &mut rng) {
@@ -897,11 +1138,11 @@ mod audit {
         "locale:region",
         "locale:all",
         "headers.User-Agent",
-        "headers.Accept-Language",
         "geolocation:latitude",
         "geolocation:longitude",
         "screen.width",
         "screen.height",
+        "window.devicePixelRatio",
         "webGl:vendor",
         "webGl:renderer",
         "fonts",
@@ -928,6 +1169,7 @@ mod audit {
             let country = COUNTRIES[i % COUNTRIES.len()];
             let opts = AutoFingerprintOptions {
                 auto_os: Some("any"),
+                auto_language: Some("geo"),
                 change_window_size: false,
                 default_outer_width: None,
                 default_outer_height: None,
@@ -944,8 +1186,13 @@ mod audit {
                     "auto config emitted removed Camoufox v159 key: {removed}"
                 );
             }
+            assert!(
+                !out.config.contains_key("headers.Accept-Language"),
+                "auto mode must let Firefox derive Accept-Language from locale:all"
+            );
             assert!(out.prefs.contains_key("intl.locale.requested"));
             assert!(out.prefs.contains_key("general.cpu_identity"));
+            assert!(out.prefs.contains_key("layout.css.devPixelsPerPx"));
             assert_eq!(
                 out.prefs.get("permissions.default.geo"),
                 Some(&serde_json::json!(1))
@@ -974,6 +1221,7 @@ mod audit {
         let mk = |nonce| {
             let opts = AutoFingerprintOptions {
                 auto_os: Some("any"),
+                auto_language: None,
                 change_window_size: false,
                 default_outer_width: None,
                 default_outer_height: None,
@@ -1012,6 +1260,7 @@ mod audit {
         let host_out = generate_auto_bundle(
             &AutoFingerprintOptions {
                 auto_os: None,
+                auto_language: None,
                 change_window_size: false,
                 default_outer_width: None,
                 default_outer_height: None,
@@ -1035,6 +1284,7 @@ mod audit {
         let foreign_out = generate_auto_bundle(
             &AutoFingerprintOptions {
                 auto_os: Some(foreign_os),
+                auto_language: None,
                 change_window_size: false,
                 default_outer_width: None,
                 default_outer_height: None,
@@ -1053,5 +1303,138 @@ mod audit {
             foreign_out.prefs.get("gfx.blacklist.webgpu"),
             Some(&serde_json::json!(4))
         );
+    }
+
+    #[test]
+    fn auto_language_defaults_to_en_us_and_supports_geo_and_explicit_locales() {
+        let id = "lang-test-instance";
+        let japan_geo = resolve("Japan", id);
+
+        let default_out = generate_auto_bundle(
+            &AutoFingerprintOptions {
+                auto_os: Some("windows"),
+                auto_language: None,
+                change_window_size: false,
+                default_outer_width: None,
+                default_outer_height: None,
+                target_ff_version: Some("159"),
+                identity_seed: identity_seed(id, 0),
+                block_webrtc: false,
+                canvas_noise: None,
+            },
+            &japan_geo,
+        );
+        assert_eq!(default_out.config.get("timezone"), Some(&serde_json::json!("Asia/Tokyo")));
+        assert_eq!(default_out.config.get("locale:language"), Some(&serde_json::json!("en")));
+        assert_eq!(default_out.config.get("locale:region"), Some(&serde_json::json!("US")));
+        assert_eq!(default_out.config.get("locale:all"), Some(&serde_json::json!("en-US, en")));
+        assert_eq!(
+            default_out.prefs.get("intl.locale.requested"),
+            Some(&serde_json::json!("en-US"))
+        );
+        assert!(!default_out.config.contains_key("headers.Accept-Language"));
+
+        let geo_out = generate_auto_bundle(
+            &AutoFingerprintOptions {
+                auto_os: Some("macos"),
+                auto_language: Some("geo"),
+                change_window_size: false,
+                default_outer_width: None,
+                default_outer_height: None,
+                target_ff_version: Some("159"),
+                identity_seed: identity_seed(id, 0),
+                block_webrtc: false,
+                canvas_noise: None,
+            },
+            &japan_geo,
+        );
+        assert_eq!(geo_out.config.get("locale:language"), Some(&serde_json::json!("ja")));
+        assert_eq!(geo_out.config.get("locale:region"), Some(&serde_json::json!("JP")));
+        assert_eq!(geo_out.config.get("locale:all"), Some(&serde_json::json!("ja-JP, ja")));
+        assert_eq!(
+            geo_out.prefs.get("intl.locale.requested"),
+            Some(&serde_json::json!("ja-JP"))
+        );
+        let mac_voices = geo_out.config.get("voices").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(mac_voices[0].get("lang"), Some(&serde_json::json!("ja-JP")));
+        assert_eq!(mac_voices[0].get("isDefault"), Some(&serde_json::json!(true)));
+
+        let explicit_out = generate_auto_bundle(
+            &AutoFingerprintOptions {
+                auto_os: Some("windows"),
+                auto_language: Some("de-DE"),
+                change_window_size: false,
+                default_outer_width: None,
+                default_outer_height: None,
+                target_ff_version: Some("159"),
+                identity_seed: identity_seed(id, 0),
+                block_webrtc: false,
+                canvas_noise: None,
+            },
+            &japan_geo,
+        );
+        assert_eq!(explicit_out.config.get("locale:language"), Some(&serde_json::json!("de")));
+        assert_eq!(explicit_out.config.get("locale:region"), Some(&serde_json::json!("DE")));
+        assert_eq!(
+            explicit_out.prefs.get("intl.locale.requested"),
+            Some(&serde_json::json!("de-DE"))
+        );
+        let win_voices = explicit_out.config.get("voices").and_then(|v| v.as_array()).unwrap();
+        assert!(!win_voices.is_empty());
+        assert!(win_voices.iter().all(|v| v.get("lang") == Some(&serde_json::json!("de-DE"))));
+    }
+
+    #[test]
+    fn native_host_fonts_stay_bounded_and_ipv6_mismatch_enables_ipv4_only() {
+        let id = "native-fonts-ipv6";
+        let mut geo = resolve("Japan", id);
+        geo.ipv6_mismatch = true;
+
+        let out = generate_auto_bundle(
+            &AutoFingerprintOptions {
+                auto_os: None,
+                auto_language: None,
+                change_window_size: false,
+                default_outer_width: None,
+                default_outer_height: None,
+                target_ff_version: Some("159"),
+                identity_seed: identity_seed(id, 0),
+                block_webrtc: false,
+                canvas_noise: None,
+            },
+            &geo,
+        );
+        assert_eq!(
+            out.config.get("network:ipv4Only"),
+            Some(&serde_json::json!(true))
+        );
+        assert!(out.config.contains_key("window.devicePixelRatio"));
+        assert!(out.prefs.contains_key("layout.css.devPixelsPerPx"));
+
+        if host_os_name() == "windows" || host_os_name() == "macos" {
+            let fonts = out.config.get("fonts").and_then(|v| v.as_array()).unwrap();
+            assert!(
+                fonts.len() <= 25,
+                "native host should claim OS base fonts only, got {}",
+                fonts.len()
+            );
+        }
+
+        // Cross-platform deterministic checks for Win10 vs Win11 native fonts,
+        // 3-part BCP-47 script tags, and macOS en-US default voice fallback.
+        let mut rng_a = StdRng::seed_from_u64(42);
+        let mut rng_b = StdRng::seed_from_u64(42);
+        let win10 = generate_font_subset("windows", true, false, &mut rng_a);
+        let win11 = generate_font_subset("windows", true, true, &mut rng_b);
+        assert!(!win10.iter().any(|f| WINDOWS_11_MARKER_FONTS.contains(&f.as_str())));
+        assert!(win11.iter().any(|f| WINDOWS_11_MARKER_FONTS.contains(&f.as_str())));
+
+        let (l, r, sc, _all, req) = resolve_auto_locale(Some("zh-Hans-CN"), &geo);
+        assert_eq!((l.as_str(), r.as_str(), sc.as_deref(), req.as_str()), ("zh", "CN", Some("Hans"), "zh-Hans-CN"));
+
+        let mut rng_c = StdRng::seed_from_u64(7);
+        let mac_unmatched = build_locale_voices("macos", "xx-ZZ", &mut rng_c);
+        assert_eq!(mac_unmatched[0].get("lang"), Some(&serde_json::json!("en-US")));
+        assert_eq!(mac_unmatched[0].get("isDefault"), Some(&serde_json::json!(true)));
     }
 }

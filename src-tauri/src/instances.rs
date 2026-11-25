@@ -113,6 +113,7 @@ pub struct FingerprintConfig {
     // AUTO mode
     pub auto_fingerprint: Option<bool>,
     pub auto_os: Option<String>,
+    pub auto_language: Option<String>,
     pub auto_change_window_size: Option<bool>,
     pub identity_nonce: Option<u64>,
 }
@@ -396,25 +397,36 @@ pub(crate) fn build_camou_config_and_prefs(
     set_str!("locale:language", fp.locale_language);
     set_str!("locale:region", fp.locale_region);
     set_str!("locale:script", fp.locale_script);
-    if let Some(ref lang) = fp.locale_language {
-        if !lang.trim().is_empty() {
-            let mut parts = vec![lang.as_str()];
-            if let Some(ref sc) = fp.locale_script {
-                if !sc.trim().is_empty() {
-                    parts.push(sc.as_str());
-                }
+    let requested_locale = fp
+        .locale_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|lang| {
+            let mut parts = vec![lang];
+            if let Some(sc) = fp
+                .locale_script
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                parts.push(sc);
             }
-            if let Some(ref reg) = fp.locale_region {
-                if !reg.trim().is_empty() {
-                    parts.push(reg.as_str());
-                }
+            if let Some(reg) = fp
+                .locale_region
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                parts.push(reg);
             }
-            prefs.insert(
-                "intl.locale.requested".into(),
-                serde_json::json!(parts.join("-")),
-            );
-        }
-    }
+            parts.join("-")
+        })
+        .unwrap_or_else(|| "en-US".to_string());
+    prefs.insert(
+        "intl.locale.requested".into(),
+        serde_json::json!(requested_locale),
+    );
 
     // WebRTC
     if fp.block_webrtc != Some(true) {
@@ -1301,6 +1313,7 @@ pub async fn launch_instance(
         let nonce = effective_fp.identity_nonce.unwrap_or(0);
         let opts = crate::auto_fingerprint::AutoFingerprintOptions {
             auto_os: effective_fp.auto_os.as_deref(),
+            auto_language: effective_fp.auto_language.as_deref(),
             change_window_size: effective_fp.auto_change_window_size.unwrap_or(true),
             default_outer_width: effective_fp.outer_width,
             default_outer_height: effective_fp.outer_height,
@@ -1336,6 +1349,7 @@ pub async fn launch_instance(
 
     const MANAGED_CAMOU_PREFS: &[&str] = &[
         "intl.locale.requested",
+        "intl.accept_languages",
         "permissions.default.geo",
         "general.cpu_identity",
         "ui.useOverlayScrollbars",
@@ -1899,15 +1913,51 @@ mod tests {
         let dir = temp_dir("scrub");
         fs::write(
             dir.join("prefs.js"),
-            "user_pref(\"intl.locale.requested\", \"de-DE\");\nuser_pref(\"browser.custom\", 42);\n",
+            "user_pref(\"intl.locale.requested\", \"de-DE\");\nuser_pref(\"intl.accept_languages\", \"bn-BD, bn\");\nuser_pref(\"layout.css.devPixelsPerPx\", \"2\");\nuser_pref(\"browser.custom\", 42);\n",
         )
         .unwrap();
-        scrub_managed_prefs_from_prefs_js(&dir, &["intl.locale.requested"]).unwrap();
+        scrub_managed_prefs_from_prefs_js(
+            &dir,
+            &[
+                "intl.locale.requested",
+                "intl.accept_languages",
+                "layout.css.devPixelsPerPx",
+            ],
+        )
+        .unwrap();
         let after = fs::read_to_string(dir.join("prefs.js")).unwrap();
         assert!(!after.contains("intl.locale.requested"));
+        assert!(!after.contains("intl.accept_languages"));
+        assert!(!after.contains("layout.css.devPixelsPerPx"));
         assert!(after.contains("browser.custom"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn manual_mode_defaults_intl_locale_requested_to_en_us_when_unset() {
+        let fp = FingerprintConfig {
+            auto_fingerprint: Some(false),
+            ..Default::default()
+        };
+        let (_cfg, prefs) = build_camou_config_and_prefs(&fp, Some("159"));
+        assert_eq!(
+            prefs.get("intl.locale.requested"),
+            Some(&serde_json::json!("en-US"))
+        );
+    }
+
+    #[test]
+    fn explicit_ipv4_only_false_overrides_auto_ipv6_mismatch_guard() {
+        let mut cfg = serde_json::Map::new();
+        cfg.insert("network:ipv4Only".into(), serde_json::json!(true));
+        let mut prefs = serde_json::Map::new();
+        let fp = FingerprintConfig {
+            network_ipv4_only: Some(false),
+            ..Default::default()
+        };
+        apply_shared_v159_flags(&fp, &mut cfg, &mut prefs);
+        assert_eq!(cfg.get("network:ipv4Only"), Some(&serde_json::json!(false)));
     }
 
     #[test]
