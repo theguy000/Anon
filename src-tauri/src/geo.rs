@@ -26,8 +26,6 @@ struct CountryProfile {
     region: String,
     lat: f64,
     lon: f64,
-    #[serde(rename = "acceptLanguage")]
-    accept_language: String,
 }
 
 fn table() -> &'static HashMap<String, CountryProfile> {
@@ -77,7 +75,6 @@ pub struct GeoContext {
     pub language: String,
     pub region: String,
     pub locale_all: String,
-    pub accept_language: String,
     pub coordinates: Option<(f64, f64)>,
     pub ipv6_mismatch: bool,
 }
@@ -110,13 +107,12 @@ pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
         lookup.country_code.as_deref(),
     );
 
-    let (language, region, locale_all, accept_language) = if let Some(p) = profile {
+    let (language, region, locale_all) = if let Some(p) = profile {
         let bare = p.language.split('-').next().unwrap_or("en").to_string();
         (
             bare.clone(),
             p.region.clone(),
             format!("{}, {}", p.language, bare),
-            p.accept_language.clone(),
         )
     } else if let Some(code) = lookup
         .country_code
@@ -128,14 +124,12 @@ pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
             "en".to_string(),
             upper.clone(),
             format!("en-{}, en", upper),
-            format!("en-{},en;q=0.9", upper),
         )
     } else {
         (
             "en".to_string(),
             "US".to_string(),
             "en-US, en".to_string(),
-            "en-US,en;q=0.9".to_string(),
         )
     };
 
@@ -179,7 +173,6 @@ pub fn resolve_from_lookup(lookup: &GeoLookup, salt: &str) -> GeoContext {
         language,
         region,
         locale_all,
-        accept_language,
         coordinates,
         ipv6_mismatch: false,
     }
@@ -232,7 +225,6 @@ fn unknown() -> GeoContext {
         language: "en".into(),
         region: "US".into(),
         locale_all: "en-US, en".into(),
-        accept_language: "en-US,en;q=0.9".into(),
         coordinates: None,
         ipv6_mismatch: false,
     }
@@ -623,7 +615,7 @@ mod tests {
         assert!(!g.timezone.is_empty());
         assert!(!g.language.is_empty());
         assert!(!g.region.is_empty());
-        assert!(!g.accept_language.is_empty());
+        assert!(!g.locale_all.is_empty());
         assert!(g.coordinates.is_none());
     }
 }
