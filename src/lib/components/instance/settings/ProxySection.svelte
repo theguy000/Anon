@@ -6,11 +6,12 @@
 
   $: isDisabled = !proxyConfig.proxy_type;
   $: showAuth = proxyConfig.proxy_type === "socks5" || proxyConfig.proxy_type === "http";
-  $: canTest = proxyConfig.proxy_type && proxyConfig.host && proxyConfig.port;
+  $: canTest = isDisabled || Boolean(proxyConfig.proxy_type && proxyConfig.host && proxyConfig.port);
 
   let showPassword = false;
   let testing = false;
   let testResult: ProxyTestResult | null = null;
+  let testedDirect = false;
 
   function handleTypeChange() {
     if (!proxyConfig.proxy_type) {
@@ -27,8 +28,10 @@
     if (!canTest) return;
     testing = true;
     testResult = null;
+    const direct = isDisabled;
+    testedDirect = direct;
     try {
-      testResult = await testProxy(proxyConfig);
+      testResult = await testProxy(direct ? {} : proxyConfig);
     } catch (e) {
       testResult = { success: false, error: String(e) };
     } finally {
@@ -54,7 +57,9 @@
   </div>
 
   {#if isDisabled}
-    <p class="direct-note">Traffic connects directly without a proxy.</p>
+    <p class="direct-note">
+      Traffic connects directly (or through your system VPN). Timezone and geolocation follow your live exit IP on every launch.
+    </p>
   {:else}
     <div class="field-row">
       <div class="field" style="flex: 3;">
@@ -126,54 +131,59 @@
       </div>
     {/if}
 
-    <div class="proxy-actions">
-      <button
-        type="button"
-        class="btn btn-sm"
-        disabled={!canTest || testing}
-        on:click={handleTest}
-      >
-        {testing ? "Testing…" : "Test connection"}
-      </button>
-    </div>
+  {/if}
 
-    {#if testResult}
-      <div class="test-result" class:test-success={testResult.success} class:test-fail={!testResult.success}>
-        <div class="test-summary">
-          {#if testResult.success}
-            <span class="status-ok">Connected</span>
-            {#if testResult.ip}<span class="sep">·</span><span class="mono">{testResult.ip}</span>{/if}
-            {#if testResult.country}
-              <span class="sep">·</span>
-              <span>{testResult.country}{testResult.city ? `, ${testResult.city}` : ""}</span>
-            {/if}
-            {#if testResult.dns_leak}
-              <span class="sep">·</span>
-              <span class="status-fail">DNS leak</span>
-            {/if}
-          {:else}
-            <span class="status-fail">Connection failed</span>
-            {#if testResult.error}
-              <span class="sep">·</span>
-              <span class="test-err-text">{testResult.error}</span>
-            {/if}
+  <div class="proxy-actions">
+    <button
+      type="button"
+      class="btn btn-sm"
+      disabled={!canTest || testing}
+      on:click={handleTest}
+    >
+      {#if testing}
+        {isDisabled ? "Checking…" : "Testing…"}
+      {:else}
+        {isDisabled ? "Check current IP" : "Test connection"}
+      {/if}
+    </button>
+  </div>
+
+  {#if testResult}
+    <div class="test-result" class:test-success={testResult.success} class:test-fail={!testResult.success}>
+      <div class="test-summary">
+        {#if testResult.success}
+          <span class="status-ok">{testedDirect ? "Live exit" : "Connected"}</span>
+          {#if testResult.ip}<span class="sep">·</span><span class="mono">{testResult.ip}</span>{/if}
+          {#if testResult.country}
+            <span class="sep">·</span>
+            <span>{testResult.country}{testResult.city ? `, ${testResult.city}` : ""}</span>
           {/if}
-        </div>
-        <div class="test-right">
-          {#if testResult.success && testResult.latency_ms != null}
-            <span class="mono latency">{testResult.latency_ms} ms</span>
+          {#if testResult.dns_leak}
+            <span class="sep">·</span>
+            <span class="status-fail">DNS leak</span>
           {/if}
-          <button
-            type="button"
-            class="test-dismiss"
-            on:click={() => (testResult = null)}
-            aria-label="Dismiss"
-          >
-            ×
-          </button>
-        </div>
+        {:else}
+          <span class="status-fail">{testedDirect ? "IP check failed" : "Connection failed"}</span>
+          {#if testResult.error}
+            <span class="sep">·</span>
+            <span class="test-err-text">{testResult.error}</span>
+          {/if}
+        {/if}
       </div>
-    {/if}
+      <div class="test-right">
+        {#if testResult.success && testResult.latency_ms != null}
+          <span class="mono latency">{testResult.latency_ms} ms</span>
+        {/if}
+        <button
+          type="button"
+          class="test-dismiss"
+          on:click={() => (testResult = null)}
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+    </div>
   {/if}
 </div>
 
