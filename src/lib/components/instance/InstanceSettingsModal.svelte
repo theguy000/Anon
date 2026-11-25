@@ -128,7 +128,7 @@
         globalPresetIndex = instance.fingerprint?.global_preset_index ?? -1;
         autoMode = instance.fingerprint?.auto_fingerprint !== false;
         autoOs = instance.fingerprint?.auto_os ?? "host";
-        autoLanguage = instance.fingerprint?.auto_language ?? "en-US";
+        autoLanguage = instance.fingerprint?.auto_language?.trim() || "en-US";
         autoChangeWindowSize = instance.fingerprint?.auto_change_window_size !== false;
         autoWindowPresetIndex = WINDOW_PRESETS.findIndex(
           (p) =>
@@ -513,7 +513,11 @@
                   type="checkbox"
                   checked={fp.network_ipv4_only ?? false}
                   on:change={(e) =>
-                    (fp = setBool(fp, "network_ipv4_only", (e.target as HTMLInputElement).checked))}
+                    (fp = setBool(
+                      fp,
+                      "network_ipv4_only",
+                      (e.target as HTMLInputElement).checked ? true : null
+                    ))}
                 />
                 <span class="slider"></span>
               </label>

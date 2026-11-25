@@ -4,15 +4,17 @@ use crate::camoufox::get_data_dir;
 use crate::instances::ProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Once, OnceLock};
-use std::time::Duration;
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
 const GEO_PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 const IPV6_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 static GEO_TABLE: OnceLock<HashMap<String, CountryProfile>> = OnceLock::new();
-static CLEANUP_LEGACY_CACHE: Once = Once::new();
+static LEGACY_CACHE_CLEANED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Deserialize)]
 struct GeoTable {
@@ -282,8 +284,8 @@ struct IpApiCoResponse {
     country_code: Option<String>,
     city: Option<String>,
     timezone: Option<String>,
-    latitude: Option<f64>,
-    longitude: Option<f64>,
+    latitude: Option<NumberOrString>,
+    longitude: Option<NumberOrString>,
 }
 
 fn non_empty(val: Option<String>) -> Option<String> {
@@ -345,8 +347,8 @@ pub(crate) fn parse_ipapi_co(body: &str) -> Option<GeoLookup> {
         country_code,
         city: non_empty(parsed.city),
         timezone,
-        latitude: parsed.latitude.filter(|v| v.is_finite()),
-        longitude: parsed.longitude.filter(|v| v.is_finite()),
+        latitude: parsed.latitude.as_ref().and_then(NumberOrString::as_f64),
+        longitude: parsed.longitude.as_ref().and_then(NumberOrString::as_f64),
     })
 }
 
@@ -363,9 +365,28 @@ async fn fetch_url_text(client: &reqwest::Client, url: &str) -> Result<String, S
     resp.text().await.map_err(|e| e.to_string())
 }
 
-/// Fetch live exit-IP geolocation over HTTPS without caching, so VPN switches
-/// and rotating proxies always reflect the active exit.
-pub async fn fetch_live_geo(proxy: Option<&ProxyConfig>) -> Result<GeoLookup, String> {
+type ProviderSpec = (&'static str, &'static str, fn(&str) -> Option<GeoLookup>);
+
+const DIRECT_PROVIDERS: &[ProviderSpec] = &[
+    // Direct launches query IPv4-only first so dual-stack OS preference does not
+    // resolve an IPv4-only VPN via a leaked ISP IPv6 address.
+    ("ipv4.geojs", "https://ipv4.geojs.io/v1/ip/geo.json", parse_geojs),
+    ("geojs", "https://get.geojs.io/v1/ip/geo.json", parse_geojs),
+    ("ipwho.is", "https://ipwho.is/", parse_ipwhois),
+    ("ipapi.co", "https://ipapi.co/json/", parse_ipapi_co),
+];
+
+const PROXIED_PROVIDERS: &[ProviderSpec] = &[
+    ("geojs", "https://get.geojs.io/v1/ip/geo.json", parse_geojs),
+    ("ipwho.is", "https://ipwho.is/", parse_ipwhois),
+    ("ipapi.co", "https://ipapi.co/json/", parse_ipapi_co),
+];
+
+/// Fetch live exit-IP geolocation over HTTPS without caching and return the
+/// lookup alongside the succeeding provider's RTT in milliseconds.
+pub async fn fetch_live_geo_with_rtt(
+    proxy: Option<&ProxyConfig>,
+) -> Result<(GeoLookup, u64), String> {
     let mut builder = reqwest::Client::builder().timeout(GEO_PROVIDER_TIMEOUT);
     if let Some(pc) = proxy {
         builder = builder.proxy(crate::proxy_tester::reqwest_proxy(pc)?);
@@ -374,36 +395,24 @@ pub async fn fetch_live_geo(proxy: Option<&ProxyConfig>) -> Result<GeoLookup, St
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
+    let providers = if proxy.is_none() {
+        DIRECT_PROVIDERS
+    } else {
+        PROXIED_PROVIDERS
+    };
+
     let mut errors: Vec<String> = Vec::new();
-
-    match fetch_url_text(&client, "https://get.geojs.io/v1/ip/geo.json").await {
-        Ok(body) => {
-            if let Some(lookup) = parse_geojs(&body) {
-                return Ok(lookup);
+    for &(name, url, parser) in providers {
+        let started = Instant::now();
+        match fetch_url_text(&client, url).await {
+            Ok(body) => {
+                if let Some(lookup) = parser(&body) {
+                    return Ok((lookup, started.elapsed().as_millis() as u64));
+                }
+                errors.push(format!("{}: invalid response", name));
             }
-            errors.push("geojs: invalid response".into());
+            Err(e) => errors.push(format!("{}: {}", name, e)),
         }
-        Err(e) => errors.push(format!("geojs: {}", e)),
-    }
-
-    match fetch_url_text(&client, "https://ipwho.is/").await {
-        Ok(body) => {
-            if let Some(lookup) = parse_ipwhois(&body) {
-                return Ok(lookup);
-            }
-            errors.push("ipwho.is: invalid response".into());
-        }
-        Err(e) => errors.push(format!("ipwho.is: {}", e)),
-    }
-
-    match fetch_url_text(&client, "https://ipapi.co/json/").await {
-        Ok(body) => {
-            if let Some(lookup) = parse_ipapi_co(&body) {
-                return Ok(lookup);
-            }
-            errors.push("ipapi.co: invalid response".into());
-        }
-        Err(e) => errors.push(format!("ipapi.co: {}", e)),
     }
 
     Err(format!("Geo lookup failed ({})", errors.join("; ")))
@@ -413,7 +422,8 @@ async fn check_direct_ipv6_mismatch(ipv4: &GeoContext) -> bool {
     let is_ipv4_exit = ipv4
         .exit_ip
         .as_deref()
-        .is_some_and(|ip| ip.contains('.') && !ip.contains(':'));
+        .and_then(|ip| ip.parse::<IpAddr>().ok())
+        .is_some_and(|ip| ip.is_ipv4());
     if !is_ipv4_exit {
         return false;
     }
@@ -435,7 +445,8 @@ async fn check_direct_ipv6_mismatch(ipv4: &GeoContext) -> bool {
     let is_ipv6_exit = ipv6_lookup
         .ip
         .as_deref()
-        .is_some_and(|ip| ip.contains(':'));
+        .and_then(|ip| ip.parse::<IpAddr>().ok())
+        .is_some_and(|ip| ip.is_ipv6());
     if !is_ipv6_exit {
         return false;
     }
@@ -449,16 +460,13 @@ pub async fn for_instance(
     instance_id: &str,
     proxy: Option<&ProxyConfig>,
 ) -> GeoContext {
-    let data_dir = get_data_dir(app).await;
-    CLEANUP_LEGACY_CACHE.call_once(|| {
-        let legacy = data_dir.join("geo_cache.json");
-        if legacy.exists() {
-            let _ = std::fs::remove_file(legacy);
-        }
-    });
+    if !LEGACY_CACHE_CLEANED.swap(true, Ordering::Relaxed) {
+        let legacy = get_data_dir(app).await.join("geo_cache.json");
+        let _ = std::fs::remove_file(legacy);
+    }
 
-    match fetch_live_geo(proxy).await {
-        Ok(lookup) => {
+    match fetch_live_geo_with_rtt(proxy).await {
+        Ok((lookup, _)) => {
             let mut ctx = resolve_from_lookup(&lookup, instance_id);
             if proxy.is_none() {
                 ctx.ipv6_mismatch = check_direct_ipv6_mismatch(&ctx).await;

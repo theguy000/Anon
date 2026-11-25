@@ -12,8 +12,11 @@
   let testing = false;
   let testResult: ProxyTestResult | null = null;
   let testedDirect = false;
+  let requestId = 0;
 
   function handleTypeChange() {
+    requestId += 1;
+    testing = false;
     if (!proxyConfig.proxy_type) {
       proxyConfig.host = null;
       proxyConfig.port = null;
@@ -25,17 +28,25 @@
   }
 
   async function handleTest() {
-    if (!canTest) return;
+    if (!canTest || testing) return;
+    const currentId = ++requestId;
+    const direct = isDisabled;
     testing = true;
     testResult = null;
-    const direct = isDisabled;
     testedDirect = direct;
     try {
-      testResult = await testProxy(direct ? {} : proxyConfig);
+      const res = await testProxy(direct ? {} : proxyConfig);
+      if (currentId === requestId) {
+        testResult = res;
+      }
     } catch (e) {
-      testResult = { success: false, error: String(e) };
+      if (currentId === requestId) {
+        testResult = { success: false, error: String(e) };
+      }
     } finally {
-      testing = false;
+      if (currentId === requestId) {
+        testing = false;
+      }
     }
   }
 </script>
@@ -141,7 +152,7 @@
       on:click={handleTest}
     >
       {#if testing}
-        {isDisabled ? "Checking…" : "Testing…"}
+        {testedDirect ? "Checking…" : "Testing…"}
       {:else}
         {isDisabled ? "Check current IP" : "Test connection"}
       {/if}

@@ -480,7 +480,7 @@ fn parse_voice_entry(entry: &str) -> Option<ParsedVoice<'_>> {
     if name.is_empty() || lang.is_empty() {
         return None;
     }
-    let is_local = parts.next().is_none_or(|t| t == "local");
+    let is_local = parts.next().is_none_or(|t| t.trim() == "local");
     Some(ParsedVoice {
         name,
         lang,
@@ -503,14 +503,12 @@ fn build_locale_voices(
     requested_locale: &str,
     rng: &mut StdRng,
 ) -> Vec<serde_json::Value> {
-    let voices_data = load_voices();
     let os_key = match target_os {
         "macos" => "mac",
         "windows" => "win",
-        "linux" => "lin",
-        other => other,
+        _ => return Vec::new(),
     };
-    let Some(raw_list) = voices_data.get(os_key) else {
+    let Some(raw_list) = load_voices().get(os_key) else {
         return Vec::new();
     };
     let parsed: Vec<ParsedVoice<'_>> = raw_list
@@ -533,15 +531,21 @@ fn build_locale_voices(
             .filter(|v| v.lang.eq_ignore_ascii_case(requested_locale))
             .collect();
         if matched.is_empty() {
-            matched = parsed
+            if let Some(first_region_lang) = parsed
                 .iter()
-                .filter(|v| {
+                .find(|v| {
                     v.lang
                         .split('-')
                         .next()
                         .is_some_and(|l| l.eq_ignore_ascii_case(&primary_lang))
                 })
-                .collect();
+                .map(|v| v.lang)
+            {
+                matched = parsed
+                    .iter()
+                    .filter(|v| v.lang.eq_ignore_ascii_case(first_region_lang))
+                    .collect();
+            }
         }
         if matched.is_empty() {
             matched = parsed
@@ -565,106 +569,155 @@ fn build_locale_voices(
             .collect();
     }
 
-    if target_os == "macos" {
-        let mut chosen: Vec<&ParsedVoice<'_>> = Vec::new();
-        let mut seen: HashSet<&str> = HashSet::new();
+    // macOS ships a multi-language system voice set whose default voice matches the UI locale.
+    let mut chosen: Vec<&ParsedVoice<'_>> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
 
-        // Put a voice matching the profile's locale first so isDefault aligns with language.
+    for v in parsed
+        .iter()
+        .filter(|v| v.lang.eq_ignore_ascii_case(requested_locale))
+    {
+        if seen.insert(v.name) {
+            chosen.push(v);
+        }
+    }
+    if chosen.is_empty() {
+        for v in parsed.iter().filter(|v| {
+            v.lang
+                .split('-')
+                .next()
+                .is_some_and(|l| l.eq_ignore_ascii_case(&primary_lang))
+        }) {
+            if seen.insert(v.name) {
+                chosen.push(v);
+            }
+        }
+    }
+    if chosen.is_empty() {
         for v in parsed
             .iter()
-            .filter(|v| v.lang.eq_ignore_ascii_case(requested_locale))
+            .filter(|v| v.lang.eq_ignore_ascii_case("en-US"))
         {
             if seen.insert(v.name) {
                 chosen.push(v);
             }
         }
-        if chosen.is_empty() {
-            for v in parsed.iter().filter(|v| {
-                v.lang
-                    .split('-')
-                    .next()
-                    .is_some_and(|l| l.eq_ignore_ascii_case(&primary_lang))
-            }) {
-                if seen.insert(v.name) {
-                    chosen.push(v);
-                }
-            }
-        }
-
-        let essential: HashSet<&str> = ESSENTIAL_VOICES_MACOS.iter().copied().collect();
-        for v in parsed.iter().filter(|v| essential.contains(v.name)) {
-            if seen.insert(v.name) {
-                chosen.push(v);
-            }
-        }
-
-        let remaining: Vec<&ParsedVoice<'_>> =
-            parsed.iter().filter(|v| !seen.contains(v.name)).collect();
-        let pct = rng.gen_range(40..=70);
-        let count = (pct as f64 / 100.0 * remaining.len() as f64).round() as usize;
-        let mut indices: Vec<usize> = (0..remaining.len()).collect();
-        indices.shuffle(rng);
-        for &idx in indices.iter().take(count) {
-            let v = remaining[idx];
-            if seen.insert(v.name) {
-                chosen.push(v);
-            }
-        }
-
-        return chosen
-            .into_iter()
-            .enumerate()
-            .map(|(idx, v)| voice_to_json(v, idx == 0))
-            .collect();
     }
 
-    Vec::new()
+    let essential: HashSet<&str> = ESSENTIAL_VOICES_MACOS.iter().copied().collect();
+    for v in parsed.iter().filter(|v| essential.contains(v.name)) {
+        if seen.insert(v.name) {
+            chosen.push(v);
+        }
+    }
+
+    let remaining: Vec<&ParsedVoice<'_>> =
+        parsed.iter().filter(|v| !seen.contains(v.name)).collect();
+    let pct = rng.gen_range(40..=70);
+    let count = (pct as f64 / 100.0 * remaining.len() as f64).round() as usize;
+    let mut indices: Vec<usize> = (0..remaining.len()).collect();
+    indices.shuffle(rng);
+    for &idx in indices.iter().take(count) {
+        let v = remaining[idx];
+        if seen.insert(v.name) {
+            chosen.push(v);
+        }
+    }
+
+    chosen
+        .into_iter()
+        .enumerate()
+        .map(|(idx, v)| voice_to_json(v, idx == 0))
+        .collect()
 }
 
-/// Resolve Auto-mode `(language, region, locale_all, requested_locale)`:
+fn is_valid_region_subtag(region: &str) -> bool {
+    (region.len() == 2 && region.chars().all(|c| c.is_ascii_alphabetic()))
+        || (region.len() == 3 && region.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn format_script_subtag(script: &str) -> String {
+    let mut chars = script.chars();
+    match chars.next() {
+        Some(first) => format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            chars.as_str().to_ascii_lowercase()
+        ),
+        None => String::new(),
+    }
+}
+
+/// Resolve Auto-mode `(language, region, script, locale_all, requested_locale)`:
 /// - `None` or blank -> `"en-US"` (readable English default)
 /// - `"geo"` -> live exit IP country's locale
-/// - `"lang-REGION"` -> explicit locale tag
+/// - `"lang-REGION"` or `"lang-Script-REGION"` -> explicit locale tag
 pub fn resolve_auto_locale(
     auto_language: Option<&str>,
     geo: &crate::geo::GeoContext,
-) -> (String, String, String, String) {
+) -> (String, String, Option<String>, String, String) {
     let raw = auto_language.map(str::trim).unwrap_or("");
     if raw.is_empty() {
         return (
             "en".into(),
             "US".into(),
+            None,
             "en-US, en".into(),
             "en-US".into(),
         );
     }
     if raw.eq_ignore_ascii_case("geo") {
-        let requested = format!("{}-{}", geo.language, geo.region);
+        let primary = geo
+            .locale_all
+            .split(',')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}-{}", geo.language, geo.region));
         return (
             geo.language.clone(),
             geo.region.clone(),
+            None,
             geo.locale_all.clone(),
-            requested,
+            primary,
         );
     }
 
     let normalized = raw.replace('_', "-");
-    let mut parts = normalized.split('-');
-    if let (Some(lang), Some(region), None) = (parts.next(), parts.next(), parts.next()) {
-        let lang_ok = (2..=3).contains(&lang.len()) && lang.chars().all(|c| c.is_ascii_alphabetic());
-        let region_ok = region.len() == 2 && region.chars().all(|c| c.is_ascii_alphabetic());
-        if lang_ok && region_ok {
-            let l = lang.to_ascii_lowercase();
-            let r = region.to_ascii_uppercase();
-            let requested = format!("{}-{}", l, r);
-            let locale_all = format!("{}, {}", requested, l);
-            return (l, r, locale_all, requested);
+    let parts: Vec<&str> = normalized.split('-').collect();
+    match parts.as_slice() {
+        [lang, region] => {
+            let lang_ok =
+                (2..=3).contains(&lang.len()) && lang.chars().all(|c| c.is_ascii_alphabetic());
+            if lang_ok && is_valid_region_subtag(region) {
+                let l = lang.to_ascii_lowercase();
+                let r = region.to_ascii_uppercase();
+                let requested = format!("{}-{}", l, r);
+                let locale_all = format!("{}, {}", requested, l);
+                return (l, r, None, locale_all, requested);
+            }
         }
+        [lang, script, region] => {
+            let lang_ok =
+                (2..=3).contains(&lang.len()) && lang.chars().all(|c| c.is_ascii_alphabetic());
+            let script_ok = script.len() == 4 && script.chars().all(|c| c.is_ascii_alphabetic());
+            if lang_ok && script_ok && is_valid_region_subtag(region) {
+                let l = lang.to_ascii_lowercase();
+                let s = format_script_subtag(script);
+                let r = region.to_ascii_uppercase();
+                let requested = format!("{}-{}-{}", l, s, r);
+                let locale_all = format!("{}, {}-{}, {}", requested, l, r, l);
+                return (l, r, Some(s), locale_all, requested);
+            }
+        }
+        _ => {}
     }
 
     (
         "en".into(),
         "US".into(),
+        None,
         "en-US, en".into(),
         "en-US".into(),
     )
@@ -927,10 +980,13 @@ pub fn generate_auto_bundle(
     }
 
     config.insert("timezone".into(), serde_json::json!(geo.timezone));
-    let (locale_lang, locale_region, locale_all, requested_locale) =
+    let (locale_lang, locale_region, locale_script, locale_all, requested_locale) =
         resolve_auto_locale(opts.auto_language, geo);
     config.insert("locale:language".into(), serde_json::json!(locale_lang));
     config.insert("locale:region".into(), serde_json::json!(locale_region));
+    if let Some(ref script) = locale_script {
+        config.insert("locale:script".into(), serde_json::json!(script));
+    }
     config.insert("locale:all".into(), serde_json::json!(locale_all));
     prefs.insert(
         "intl.locale.requested".into(),
@@ -958,7 +1014,8 @@ pub fn generate_auto_bundle(
     }
 
     let native_host = target_os == host_os_name();
-    let fonts = generate_font_subset(target_os, native_host, host_has_win11_fonts(), &mut rng);
+    let host_win11 = native_host && target_os == "windows" && host_has_win11_fonts();
+    let fonts = generate_font_subset(target_os, native_host, host_win11, &mut rng);
     let is_win11_fonts = target_os == "windows"
         && (fonts.is_empty()
             || fonts
@@ -1362,5 +1419,22 @@ mod audit {
                 fonts.len()
             );
         }
+
+        // Cross-platform deterministic checks for Win10 vs Win11 native fonts,
+        // 3-part BCP-47 script tags, and macOS en-US default voice fallback.
+        let mut rng_a = StdRng::seed_from_u64(42);
+        let mut rng_b = StdRng::seed_from_u64(42);
+        let win10 = generate_font_subset("windows", true, false, &mut rng_a);
+        let win11 = generate_font_subset("windows", true, true, &mut rng_b);
+        assert!(!win10.iter().any(|f| WINDOWS_11_MARKER_FONTS.contains(&f.as_str())));
+        assert!(win11.iter().any(|f| WINDOWS_11_MARKER_FONTS.contains(&f.as_str())));
+
+        let (l, r, sc, _all, req) = resolve_auto_locale(Some("zh-Hans-CN"), &geo);
+        assert_eq!((l.as_str(), r.as_str(), sc.as_deref(), req.as_str()), ("zh", "CN", Some("Hans"), "zh-Hans-CN"));
+
+        let mut rng_c = StdRng::seed_from_u64(7);
+        let mac_unmatched = build_locale_voices("macos", "xx-ZZ", &mut rng_c);
+        assert_eq!(mac_unmatched[0].get("lang"), Some(&serde_json::json!("en-US")));
+        assert_eq!(mac_unmatched[0].get("isDefault"), Some(&serde_json::json!(true)));
     }
 }

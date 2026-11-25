@@ -1,6 +1,5 @@
 use crate::instances::ProxyConfig;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProxyTestResult {
@@ -105,14 +104,13 @@ pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, St
         let _ = reqwest_proxy(pc)?;
     }
 
-    let start = Instant::now();
-    match crate::geo::fetch_live_geo(proxy_ref).await {
-        Ok(data) => Ok(ProxyTestResult {
+    match crate::geo::fetch_live_geo_with_rtt(proxy_ref).await {
+        Ok((data, rtt_ms)) => Ok(ProxyTestResult {
             success: true,
             ip: data.ip,
             country: data.country_name.or(data.country_code),
             city: data.city,
-            latency_ms: Some(start.elapsed().as_millis() as u64),
+            latency_ms: Some(rtt_ms),
             dns_leak: if direct { None } else { Some(false) },
             error: None,
         }),
@@ -121,9 +119,9 @@ pub async fn test_proxy(proxy_config: ProxyConfig) -> Result<ProxyTestResult, St
             ip: None,
             country: None,
             city: None,
-            latency_ms: Some(start.elapsed().as_millis() as u64),
+            latency_ms: None,
             dns_leak: None,
-            error: Some(format!("Connection failed: {}", e)),
+            error: Some(e),
         }),
     }
 }

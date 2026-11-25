@@ -1913,14 +1913,22 @@ mod tests {
         let dir = temp_dir("scrub");
         fs::write(
             dir.join("prefs.js"),
-            "user_pref(\"intl.locale.requested\", \"de-DE\");\nuser_pref(\"intl.accept_languages\", \"bn-BD, bn\");\nuser_pref(\"browser.custom\", 42);\n",
+            "user_pref(\"intl.locale.requested\", \"de-DE\");\nuser_pref(\"intl.accept_languages\", \"bn-BD, bn\");\nuser_pref(\"layout.css.devPixelsPerPx\", \"2\");\nuser_pref(\"browser.custom\", 42);\n",
         )
         .unwrap();
-        scrub_managed_prefs_from_prefs_js(&dir, &["intl.locale.requested", "intl.accept_languages"])
-            .unwrap();
+        scrub_managed_prefs_from_prefs_js(
+            &dir,
+            &[
+                "intl.locale.requested",
+                "intl.accept_languages",
+                "layout.css.devPixelsPerPx",
+            ],
+        )
+        .unwrap();
         let after = fs::read_to_string(dir.join("prefs.js")).unwrap();
         assert!(!after.contains("intl.locale.requested"));
         assert!(!after.contains("intl.accept_languages"));
+        assert!(!after.contains("layout.css.devPixelsPerPx"));
         assert!(after.contains("browser.custom"));
 
         let _ = fs::remove_dir_all(&dir);
